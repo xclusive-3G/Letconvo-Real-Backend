@@ -5,12 +5,20 @@ import webhookTelnyxRouter from "./router/webhookTelnyx.js";
 import webhookRetellRouter from "./router/webhookRetell.js";
 import retellBookingRouter from "./router/retellBooking.js";
 import retellUpdateBookingRouter from "./router/retellUpdateBooking.js";
+import telnyxVoiceWebhook from "./router/telnyxVoiceWebhook2.js";
+import telnyxMessagingWebhook from "./router/telnyxMessagingWebhook2.js";
+import healthRouter from "./router/health.js";
+import onboardingRoutes from "./router/onboarding.js"
+import retellWebhookRoutes from "./router/retellWebhook.js";
+import retellBookAppointmentRouter from "./router/retellBookAppointment.js";
+import callsRoutes from "./router/calls.js";
+import registerBusinessRouter from "./router/register_business.js";
 
 
 
 import bookingRouter from "./router/booking.js";
 import { supabase } from "../config/supabase.js";
-import { addCallJob } from "./queue.js";
+import { addCallJob } from "./queue/queue.js";
 // import { createClient } from "redis";
 // import  dotenv  from "dotenv";
 // dotenv.config();
@@ -35,7 +43,15 @@ app.use("/",retellBookingRouter);
 app.use("/",retellUpdateBookingRouter);
 app.use("/",getSlotsRouter);
 
-
+// ==================================
+app.use("/webhooks", telnyxVoiceWebhook);
+app.use("/webhooks", telnyxMessagingWebhook);
+app.use('/', healthRouter);
+app.use("/api", onboardingRoutes);
+app.use("/api", retellWebhookRoutes);
+app.use("/api", retellBookAppointmentRouter);
+app.use("/api", callsRoutes);
+app.use("/api",registerBusinessRouter);
 
 
 

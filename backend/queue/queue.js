@@ -23,3 +23,4 @@ export const addCallJob = async (booking) => {
     removeOnFail: false,
   });
 };
+

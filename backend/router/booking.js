@@ -1,6 +1,6 @@
 import express from "express";
 import { supabase } from "../../config/supabase.js";
-import { addCallJob } from "../queue.js";
+import { addCallJob } from "../queue/queue.js";
 const router = express.Router();
 
 router.post("/api/bookings", async (req, res) => {
