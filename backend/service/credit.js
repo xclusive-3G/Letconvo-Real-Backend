@@ -193,3 +193,29 @@ export async function pauseClientIfLowCredits(clientId, minimumCredits = 100) {
 
 // Backward compatibility for old imports
 export const pauseClientIfNoCredits = pauseClientIfLowCredits;
+
+export async function activateClientIfEnoughCredits(clientId, minimumCredits = 100) {
+  const { data: client, error } = await supabase
+    .from("clients")
+    .select("id, credits_remaining, status")
+    .eq("id", clientId)
+    .single();
+
+  if (error) throw error;
+
+  const credits = Number(client.credits_remaining || 0);
+
+  if (credits > minimumCredits && client.status !== "active") {
+    const { error: updateError } = await supabase
+      .from("clients")
+      .update({ status: "active" })
+      .eq("id", clientId);
+
+    if (updateError) throw updateError;
+
+    console.log("🟢 CLIENT RE-ACTIVATED:", {
+      clientId,
+      credits
+    });
+  }
+}

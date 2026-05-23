@@ -8,6 +8,7 @@ import {
 const router = express.Router();
 
 const MIN_CALL_CREDITS = 1;
+const MIN_START_CREDITS = 100;
 const CREDIT_MULTIPLIER = 100; // $0.01 = 1 credit
 
 function getCallCost(call) {
@@ -51,7 +52,7 @@ router.post("/retell/webhook", async (req, res) => {
       return res.json({ received: true });
     }
 
-    // ✅ call_analyzed: update transcript + recording only
+    // ✅ 1. SAVE TRANSCRIPT + RECORDING
     if (eventType === "call_analyzed") {
       const { error } = await supabase
         .from("retell_call_logs")
@@ -75,20 +76,36 @@ router.post("/retell/webhook", async (req, res) => {
       return res.json({ success: true });
     }
 
-    // ✅ call_ended: billing only
+    // ✅ 2. BILL ONLY ON CALL ENDED
     if (eventType !== "call_ended") {
       return res.json({ received: true });
     }
 
-    const clientId = call?.metadata?.clientId;
-    const recoveryId = call?.metadata?.recoveryId || null;
+    // 🔥 FIX: Get clientId from metadata OR fallback to number
+    let clientId = call?.metadata?.clientId;
+
+    if (!clientId) {
+      const businessNumber = call?.to_number || call?.toNumber;
+
+      const { data: numberRow, error } = await supabase
+        .from("client_numbers")
+        .select("client_id")
+        .eq("telnyx_number", businessNumber)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      clientId = numberRow?.client_id;
+    }
 
     if (!clientId) {
       console.log("❌ Missing clientId");
       return res.json({ received: true });
     }
 
-    // Prevent duplicate billing
+    const recoveryId = call?.metadata?.recoveryId || null;
+
+    // ✅ Prevent duplicate billing
     const { data: existing, error: existingError } = await supabase
       .from("retell_call_logs")
       .select("id")
@@ -107,9 +124,9 @@ router.post("/retell/webhook", async (req, res) => {
     const durationMinutes =
       durationSeconds > 0 ? Math.ceil(durationSeconds / 60) : 0;
 
-    // Do not charge failed/no-answer calls
     const failedReasons = ["dial_busy", "dial_no_answer", "dial_failed"];
 
+    // ✅ Skip failed calls
     if (
       durationSeconds === 0 ||
       callCost === 0 ||
@@ -117,40 +134,17 @@ router.post("/retell/webhook", async (req, res) => {
     ) {
       console.log("⛔ Skipping billing for failed call:", {
         retellCallId,
-        disconnectionReason: call?.disconnection_reason,
-        durationSeconds,
         callCost
       });
 
-      const { error: failedLogError } = await supabase
-        .from("retell_call_logs")
-        .insert({
-          client_id: clientId,
-          recovery_id: recoveryId,
-          retell_call_id: retellCallId,
-
-          caller_phone: call?.to_number || call?.toNumber || call?.from_number,
-          direction: call?.direction || null,
-
-          duration_ms: durationSeconds * 1000,
-          duration_minutes: durationMinutes,
-
-          transcript: call?.transcript || null,
-          recording_url: call?.recording_url || call?.recordingUrl || null,
-
-          disconnection_reason: call?.disconnection_reason || null,
-          call_status: call?.call_status || call?.status || eventType,
-
-          reserved_credits: 0,
-          final_credits: 0,
-          extra_credits_deducted: 0,
-          credits_deducted: 0,
-
-          call_cost: callCost,
-          raw_payload: event
-        });
-
-      if (failedLogError) throw failedLogError;
+      await supabase.from("retell_call_logs").insert({
+        client_id: clientId,
+        recovery_id: recoveryId,
+        retell_call_id: retellCallId,
+        credits_deducted: 0,
+        call_cost: callCost,
+        raw_payload: event
+      });
 
       return res.json({ success: true });
     }
@@ -159,10 +153,8 @@ router.post("/retell/webhook", async (req, res) => {
 
     console.log("💳 Billing:", {
       clientId,
-      recoveryId,
       retellCallId,
       callCost,
-      durationSeconds,
       creditsToDeduct
     });
 
@@ -176,6 +168,7 @@ router.post("/retell/webhook", async (req, res) => {
 
     console.log("💳 deducted result:", deducted);
 
+    // ✅ Auto pause
     await pauseClientIfLowCredits(clientId, MIN_START_CREDITS);
 
     const { error: logError } = await supabase
@@ -197,27 +190,20 @@ router.post("/retell/webhook", async (req, res) => {
         disconnection_reason: call?.disconnection_reason || null,
         call_status: call?.call_status || call?.status || eventType,
 
-        reserved_credits: 0,
-        final_credits: creditsToDeduct,
-        extra_credits_deducted: 0,
         credits_deducted: deducted ? creditsToDeduct : 0,
-
         call_cost: callCost,
         raw_payload: event
       });
 
-    if (logError) {
-      console.log("❌ Failed to insert retell log:", logError);
-      throw logError;
-    }
+    if (logError) throw logError;
 
-    console.log("✅ Retell call log saved:", {
+    console.log(" Retell call log saved:", {
       retellCallId,
-      deducted,
-      creditsToDeduct
+      deducted
     });
 
     return res.json({ success: true });
+
   } catch (err) {
     console.error("❌ Retell webhook error:", err);
     return res.status(500).json({ error: err.message });

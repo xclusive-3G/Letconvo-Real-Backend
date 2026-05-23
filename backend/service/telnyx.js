@@ -35,3 +35,26 @@ export async function sendMissedCallSms(to) {
     throw error;
   }
 }
+
+
+export async function transferCallToRetellSip({
+  callControlId,
+  retellAgentId
+}) {
+  const sipUri = `sip:${retellAgentId}@sip.retellai.com`;
+
+  const response = await axios.post(
+    `https://api.telnyx.com/v2/calls/${callControlId}/actions/transfer`,
+    {
+      to: sipUri
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.TELNYX_API_KEY}`,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+
+  return response.data;
+}
