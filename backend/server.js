@@ -13,10 +13,10 @@ import retellWebhookRoutes from "./router/retellWebhook.js";
 import retellBookAppointmentRouter from "./router/retellBookAppointment.js";
 import callsRoutes from "./router/calls.js";
 import registerBusinessRouter from "./router/register_business.js";
-
-
-
+import dashboardRoute from "./router/dashboardRoute.js";
+import meRoutes from "./middleware/me.js";
 import bookingRouter from "./router/booking.js";
+import callHistory from "./router/callHistory.js";
 import { supabase } from "../config/supabase.js";
 import { addCallJob } from "./queue/queue.js";
 // import { createClient } from "redis";
@@ -52,7 +52,9 @@ app.use("/api", retellWebhookRoutes);
 app.use("/api", retellBookAppointmentRouter);
 app.use("/api", callsRoutes);
 app.use("/api",registerBusinessRouter);
-
+app.use("/api", dashboardRoute);
+app.use("/api", meRoutes);
+// app.use("/api", callHistory);
 
 
 // connect to retell and update booking status based on AI outcome
