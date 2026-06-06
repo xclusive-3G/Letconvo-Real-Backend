@@ -1,32 +1,41 @@
-import { createBillingTransaction } from "../service/billingTransaction.js";
 import express from "express";
 import { supabase } from "../../config/supabase.js";
+import { createBillingTransaction } from "../service/billingTransaction.js";
 import {
   deductCreditsAtomic,
   pauseClientIfLowCredits
 } from "../service/credit.js";
 
+import { liveCalls } from "../utils/liveCallsStore.js";
+
+// import {
+//   addLiveCall,
+//   removeLiveCall
+// } from "../services/liveCalls.js";
+
+
+
 const router = express.Router();
 
 const MIN_CALL_CREDITS = 1;
 const MIN_START_CREDITS = 100;
-const CREDIT_MULTIPLIER = 100; // $0.01 = 1 credit
+const CREDIT_MULTIPLIER = 100;
 
 function getCallCost(call) {
   return Number(
     call?.call_cost?.combined_cost ??
-    call?.callCost?.combinedCost ??
-    0
+      call?.callCost?.combinedCost ??
+      0
   );
 }
 
 function getDurationSeconds(call) {
   return Number(
     call?.call_cost?.total_duration_seconds ??
-    call?.callCost?.totalDurationSeconds ??
-    call?.duration_seconds ??
-    call?.durationSeconds ??
-    0
+      call?.callCost?.totalDurationSeconds ??
+      call?.duration_seconds ??
+      call?.durationSeconds ??
+      0
   );
 }
 
@@ -48,6 +57,10 @@ function getCallerPhone(call) {
     call?.callerPhone ||
     null
   );
+}
+
+function getBusinessNumber(call) {
+  return call?.to_number || call?.toNumber || null;
 }
 
 function getTranscript(call) {
@@ -73,26 +86,121 @@ function getSentiment(call) {
 }
 
 function calculateCreditsFromCost(callCost) {
-  return Math.max(MIN_CALL_CREDITS, Math.ceil(callCost * CREDIT_MULTIPLIER));
+  return Math.max(
+    MIN_CALL_CREDITS,
+    Math.ceil(callCost * CREDIT_MULTIPLIER)
+  );
+}
+
+async function resolveClientId(call) {
+  let clientId = call?.metadata?.clientId;
+
+  if (clientId) return clientId;
+
+  const possibleNumbers = [
+    call?.to_number,
+    call?.toNumber,
+    call?.from_number,
+    call?.fromNumber
+  ].filter(Boolean);
+
+  for (const number of possibleNumbers) {
+    const { data, error } = await supabase
+      .from("client_numbers")
+      .select("client_id")
+      .eq("telnyx_number", number)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (data?.client_id) return data.client_id;
+  }
+
+  return null;
 }
 
 router.post("/retell/webhook", async (req, res) => {
   try {
-    console.log("🔥 RETELL WEBHOOK HIT");
-    console.log(JSON.stringify(req.body, null, 2));
-
     const event = req.body;
     const eventType = event.event || event.event_type;
     const call = event.call || event.data || event;
+
+    console.log("🔥 RETELL WEBHOOK HIT:", eventType);
 
     const retellCallId = call?.call_id || call?.callId;
 
     if (!retellCallId) {
       console.log("❌ Missing retellCallId");
-      return res.json({ received: true });
+      return res.status(200).json({ received: true });
     }
 
-    // ✅ SAVE ANALYSIS DATA WHEN AVAILABLE
+    const clientId = await resolveClientId(call);
+
+    if (!clientId) {
+      console.log("❌ Missing clientId for call:", retellCallId);
+      return res.status(200).json({ received: true });
+    }
+
+    if (
+  eventType === "call_started" ||
+  eventType === "call_initiated" ||
+  eventType === "call_created"
+) {
+  // await addLiveCall({
+  //   callId: retellCallId,
+  //   clientId,
+
+  //   caller: getCallerPhone(call) || "Unknown caller",
+  //   businessNumber: getBusinessNumber(call),
+
+  //   provider: "retell",
+  //   startedAt: Date.now()
+  // });
+
+  // console.log("📞 Active caller added:", {
+  //   retellCallId,
+  //   clientId,
+  //   caller: getCallerPhone(call)
+  // });
+
+  liveCalls.set(retellCallId, {
+    callId: retellCallId,
+    clientId,
+    caller: getCallerPhone(call),
+    businessNumber: getBusinessNumber(call),
+    startedAt: Date.now()
+  });
+
+  console.log("📞 Active callers:", liveCalls.size);
+
+  return res.json({ success: true });
+
+  // return res.status(200).json({ success: true });
+}
+
+
+
+    if (
+      eventType === "transcript_updated" ||
+      eventType === "transcript_update"
+    ) {
+      const transcriptObject =
+        call?.transcript_object ||
+        event?.transcript_object ||
+        [];
+
+      await supabase
+        .from("active_calls")
+        .update({
+          transcript: transcriptObject,
+          updated_at: new Date().toISOString()
+        })
+        .eq("call_id", retellCallId);
+
+      console.log("🟢 Live transcript updated:", retellCallId);
+
+      return res.status(200).json({ success: true });
+    }
+
     if (eventType === "call_analyzed") {
       const durationSeconds = getDurationSeconds(call);
 
@@ -100,101 +208,80 @@ router.post("/retell/webhook", async (req, res) => {
         .from("retell_call_logs")
         .update({
           transcript: getTranscript(call),
-
-          transcript_object:
-            call?.transcript_object || [],
-
+          transcript_object: call?.transcript_object || [],
           transcript_with_tool_calls:
             call?.transcript_with_tool_calls || [],
-
           recording_url: getRecordingUrl(call),
           call_summary: getCallSummary(call),
           sentiment: getSentiment(call),
-
           caller_phone: getCallerPhone(call),
-
           duration_ms:
             call?.duration_ms ||
             call?.durationMs ||
             durationSeconds * 1000 ||
             0,
-
           duration_minutes:
             durationSeconds > 0
               ? Math.ceil(durationSeconds / 60)
               : 0,
-
           disconnection_reason:
             call?.disconnection_reason || null,
-
           call_status:
             call?.call_status ||
             call?.status ||
             eventType,
-
-          raw_payload: event,
-          transcript_object: call?.transcript_object || [],
-          transcript_with_tool_calls: call?.transcript_with_tool_calls || [],
+          raw_payload: event
         })
         .eq("retell_call_id", retellCallId);
 
-      if (error) {
-        console.log("❌ Failed to update transcript/recording:", error);
-        throw error;
-      }
-
-      console.log("📝 Transcript + recording saved:", {
-        retellCallId,
-        recording: getRecordingUrl(call),
-        sentiment: getSentiment(call)
-      });
-      console.log("FROM:", call?.from_number);
-      console.log("TO:", call?.to_number);
-
-
-      console.log(
-        "TRANSCRIPT OBJECT:",
-        JSON.stringify(call?.transcript_object, null, 2)
-      );
-
-      console.log(
-        "TRANSCRIPT WITH TOOLS:",
-        JSON.stringify(call?.transcript_with_tool_calls, null, 2)
-      );
-
-
-      return res.json({ success: true });
-    }
-
-    // ✅ BILL ONLY ON CALL ENDED
-    if (eventType !== "call_ended") {
-      return res.json({ received: true });
-    }
-
-    let clientId = call?.metadata?.clientId;
-
-    if (!clientId) {
-      const businessNumber =
-        call?.to_number ||
-        call?.toNumber ||
-        call?.from_number ||
-        call?.fromNumber;
-
-      const { data: numberRow, error } = await supabase
-        .from("client_numbers")
-        .select("client_id")
-        .eq("telnyx_number", businessNumber)
-        .maybeSingle();
-
       if (error) throw error;
 
-      clientId = numberRow?.client_id;
+      await supabase
+        .from("active_calls")
+        .delete()
+        .eq("call_id", retellCallId);
+
+      console.log("📝 Transcript + recording saved:", retellCallId);
+
+      return res.status(200).json({ success: true });
     }
 
-    if (!clientId) {
-      console.log("❌ Missing clientId");
-      return res.json({ received: true });
+    if (eventType !== "call_ended") {
+      return res.status(200).json({ received: true });
     }
+    if (eventType === "call_ended") {
+
+  liveCalls.delete(retellCallId);
+
+  console.log("☎️ Active callers:", liveCalls.size);
+
+  // Continue billing...
+}
+
+    const metadata =
+  req.body.call?.metadata || {};
+
+// // await removeLiveCall(
+//   metadata.clientId,
+//   req.body.call.call_id
+// );
+if (eventType === "call_ended") {
+
+  liveCalls.delete(retellCallId);
+
+  console.log("☎️ Active callers:", liveCalls.size);
+
+  // Continue billing...
+}
+
+console.log(
+  "☎️ Active caller removed"
+);
+
+    await supabase
+      .from("active_calls")
+      .delete()
+      .eq("call_id", retellCallId);
 
     const recoveryId = call?.metadata?.recoveryId || null;
 
@@ -207,12 +294,13 @@ router.post("/retell/webhook", async (req, res) => {
     if (existingError) throw existingError;
 
     if (existing) {
-      console.log("⛔ Already billed, updating latest call data:", retellCallId);
-
       await supabase
         .from("retell_call_logs")
         .update({
           transcript: getTranscript(call),
+          transcript_object: call?.transcript_object || [],
+          transcript_with_tool_calls:
+            call?.transcript_with_tool_calls || [],
           recording_url: getRecordingUrl(call),
           call_summary: getCallSummary(call),
           sentiment: getSentiment(call),
@@ -221,7 +309,9 @@ router.post("/retell/webhook", async (req, res) => {
         })
         .eq("retell_call_id", retellCallId);
 
-      return res.json({ received: true });
+      console.log("⛔ Already billed, updated call:", retellCallId);
+
+      return res.status(200).json({ received: true });
     }
 
     const callCost = getCallCost(call);
@@ -229,43 +319,46 @@ router.post("/retell/webhook", async (req, res) => {
     const durationMinutes =
       durationSeconds > 0 ? Math.ceil(durationSeconds / 60) : 0;
 
-    const failedReasons = ["dial_busy", "dial_no_answer", "dial_failed"];
+    const failedReasons = [
+      "dial_busy",
+      "dial_no_answer",
+      "dial_failed"
+    ];
 
     if (
       durationSeconds === 0 ||
       callCost === 0 ||
       failedReasons.includes(call?.disconnection_reason)
     ) {
-      console.log("⛔ Skipping billing for failed call:", {
-        retellCallId,
-        callCost
-      });
-
       await supabase.from("retell_call_logs").insert({
         client_id: clientId,
         recovery_id: recoveryId,
         retell_call_id: retellCallId,
-
         caller_phone: getCallerPhone(call),
         direction: call?.direction || null,
-
         duration_ms: durationSeconds * 1000,
         duration_minutes: durationMinutes,
-
         transcript: getTranscript(call),
+        transcript_object: call?.transcript_object || [],
+        transcript_with_tool_calls:
+          call?.transcript_with_tool_calls || [],
         recording_url: getRecordingUrl(call),
         call_summary: getCallSummary(call),
         sentiment: getSentiment(call),
-
-        disconnection_reason: call?.disconnection_reason || null,
-        call_status: call?.call_status || call?.status || eventType,
-
+        disconnection_reason:
+          call?.disconnection_reason || null,
+        call_status:
+          call?.call_status ||
+          call?.status ||
+          eventType,
         credits_deducted: 0,
         call_cost: callCost,
         raw_payload: event
       });
 
-      return res.json({ success: true });
+      console.log("⛔ Failed call saved without billing:", retellCallId);
+
+      return res.status(200).json({ success: true });
     }
 
     const creditsToDeduct = calculateCreditsFromCost(callCost);
@@ -311,26 +404,26 @@ router.post("/retell/webhook", async (req, res) => {
         client_id: clientId,
         recovery_id: recoveryId,
         retell_call_id: retellCallId,
-
         caller_phone: getCallerPhone(call),
         direction: call?.direction || null,
-
         duration_ms: durationSeconds * 1000,
         duration_minutes: durationMinutes,
-
         transcript: getTranscript(call),
+        transcript_object: call?.transcript_object || [],
+        transcript_with_tool_calls:
+          call?.transcript_with_tool_calls || [],
         recording_url: getRecordingUrl(call),
         call_summary: getCallSummary(call),
         sentiment: getSentiment(call),
-
-        disconnection_reason: call?.disconnection_reason || null,
-        call_status: call?.call_status || call?.status || eventType,
-
+        disconnection_reason:
+          call?.disconnection_reason || null,
+        call_status:
+          call?.call_status ||
+          call?.status ||
+          eventType,
         credits_deducted: deducted ? creditsToDeduct : 0,
         call_cost: callCost,
-        raw_payload: event,
-        transcript_object: call?.transcript_object || [],
-        transcript_with_tool_calls: call?.transcript_with_tool_calls || [],
+        raw_payload: event
       });
 
     if (logError) throw logError;
@@ -342,10 +435,15 @@ router.post("/retell/webhook", async (req, res) => {
       recording: getRecordingUrl(call)
     });
 
-    return res.json({ success: true });
+    return res.status(200).json({ success: true });
   } catch (err) {
     console.error("❌ Retell webhook error:", err);
-    return res.status(500).json({ error: err.message });
+
+    if (!res.headersSent) {
+      return res.status(500).json({
+        error: err.message
+      });
+    }
   }
 });
 

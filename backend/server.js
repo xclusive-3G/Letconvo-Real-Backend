@@ -16,12 +16,11 @@ import registerBusinessRouter from "./router/register_business.js";
 import dashboardRoute from "./router/dashboardRoute.js";
 import meRoutes from "./middleware/me.js";
 import bookingRouter from "./router/booking.js";
+
 import callHistory from "./router/callHistory.js";
 import { supabase } from "../config/supabase.js";
 import { addCallJob } from "./queue/queue.js";
-// import { createClient } from "redis";
-// import  dotenv  from "dotenv";
-// dotenv.config();
+
 
 
 const app = express();
@@ -54,6 +53,7 @@ app.use("/api", callsRoutes);
 app.use("/api",registerBusinessRouter);
 app.use("/api", dashboardRoute);
 app.use("/api", meRoutes);
+// app.use("/api", callsRoutes);
 // app.use("/api", callHistory);
 
 
