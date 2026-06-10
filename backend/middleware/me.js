@@ -1422,4 +1422,51 @@ router.get("/me/live-calls", requireAuth, async (req, res) => {
   });
 });
 
+router.get("/me/notifications", requireAuth, async (req, res) => {
+  const client = await getClientByUserId(req.user.id, "id");
+
+  const { data } = await supabase
+    .from("notifications")
+    .select("*")
+    .eq("client_id", client.id)
+    .order("created_at", { ascending: false })
+    .limit(50);
+
+  res.json(data);
+});
+
+router.patch(
+  "/me/notifications/:id/read",
+  requireAuth,
+  async (req, res) => {
+    const { id } = req.params;
+
+    await supabase
+      .from("notifications")
+      .update({ is_read: true })
+      .eq("id", id);
+
+    res.json({ success: true });
+  }
+);
+
+router.get(
+  "/me/notifications/unread-count",
+  requireAuth,
+  async (req, res) => {
+    const client = await getClientByUserId(req.user.id, "id");
+
+    const { count } = await supabase
+      .from("notifications")
+      .select("*", {
+        count: "exact",
+        head: true
+      })
+      .eq("client_id", client.id)
+      .eq("is_read", false);
+
+    res.json({ count });
+  }
+);
+
 export default router;
