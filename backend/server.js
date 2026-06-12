@@ -27,11 +27,7 @@ import { addCallJob } from "./queue/queue.js";
 const app = express();
 app.use(cors());
 cors({
-    origin: [
-    "http://localhost:3000",
-    "https://letconvo.live",
-    "https://www.letconvo.live"
-  ],
+    origin: "letconvo.live",
     methods: ["GET", "POST"],
     allowedHeaders: ["Content-Type"],
     credentials: true
