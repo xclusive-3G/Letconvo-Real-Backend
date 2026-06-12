@@ -16,6 +16,7 @@ import registerBusinessRouter from "./router/register_business.js";
 import dashboardRoute from "./router/dashboardRoute.js";
 import meRoutes from "./middleware/me.js";
 import bookingRouter from "./router/booking.js";
+import retellBookAppointmentRouter from "./router/googleAuth.js";
 
 import callHistory from "./router/callHistory.js";
 import { supabase } from "../config/supabase.js";
@@ -26,7 +27,11 @@ import { addCallJob } from "./queue/queue.js";
 const app = express();
 app.use(cors());
 cors({
-    origin: "http://localhost:3000",
+    origin: [
+    "http://localhost:3000",
+    "https://letconvo.live",
+    "https://www.letconvo.live"
+  ],
     methods: ["GET", "POST"],
     allowedHeaders: ["Content-Type"],
     credentials: true
@@ -53,6 +58,7 @@ app.use("/api", callsRoutes);
 app.use("/api",registerBusinessRouter);
 app.use("/api", dashboardRoute);
 app.use("/api", meRoutes);
+app.use("/api", retellBookAppointmentRouter);
 // app.use("/api", callsRoutes);
 // app.use("/api", callHistory);
 

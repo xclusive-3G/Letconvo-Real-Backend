@@ -1,4 +1,9 @@
 import { supabase } from "../../config/supabase.js";
+import jwt from "jsonwebtoken";
+import { oauthClient } from "../../config/googleOath.js";
+import express from "express";
+const router = express.Router();
+
 
 export async function requireAuth(req, res, next) {
   try {
