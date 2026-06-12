@@ -1,6 +1,6 @@
 import crypto from "crypto";
-import { oauthClient } from "../config/googleOath.js";
-import { supabase } from "../lib/supabase.js";
+import { oauthClient } from "../../config/googleOath.js";
+import { supabase } from "../../config/supabase.js";
 import { google } from "googleapis";
 import express from "express";
 

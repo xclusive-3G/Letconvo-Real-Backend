@@ -47,7 +47,7 @@ app.use("/",getSlotsRouter);
 // ==================================
 app.use("/webhooks", telnyxVoiceWebhook);
 app.use("/webhooks", telnyxMessagingWebhook);
-app.use('/api', healthRouter);
+app.use('/', healthRouter);
 app.use("/api", onboardingRoutes);
 app.use("/api", retellWebhookRoutes);
 app.use("/api", retellBookAppointmentRouter);
