@@ -16,7 +16,8 @@ import registerBusinessRouter from "./router/register_business.js";
 import dashboardRoute from "./router/dashboardRoute.js";
 import meRoutes from "./middleware/me.js";
 import bookingRouter from "./router/booking.js";
-import retellBookAppointmentRouter from "./router/googleAuth.js";
+import googleAuthBooking from "./router/googleAuth.js";
+
 
 import callHistory from "./router/callHistory.js";
 import { supabase } from "../config/supabase.js";
@@ -46,7 +47,7 @@ app.use("/",getSlotsRouter);
 // ==================================
 app.use("/webhooks", telnyxVoiceWebhook);
 app.use("/webhooks", telnyxMessagingWebhook);
-app.use('/', healthRouter);
+app.use('/api', healthRouter);
 app.use("/api", onboardingRoutes);
 app.use("/api", retellWebhookRoutes);
 app.use("/api", retellBookAppointmentRouter);
@@ -54,7 +55,7 @@ app.use("/api", callsRoutes);
 app.use("/api",registerBusinessRouter);
 app.use("/api", dashboardRoute);
 app.use("/api", meRoutes);
-app.use("/api", retellBookAppointmentRouter);
+app.use("/api", googleAuthBooking);
 // app.use("/api", callsRoutes);
 // app.use("/api", callHistory);
 
