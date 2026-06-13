@@ -1,5 +1,5 @@
 import axios from "axios";
-import { env } from "../../config/config.js";
+import { env } from "../config/config.js";
 
 export async function sendMissedCallSms(to) {
   const text =

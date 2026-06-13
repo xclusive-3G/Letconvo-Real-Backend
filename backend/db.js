@@ -1,4 +1,4 @@
-import { supabase } from "../config/supabase.js";
+import { supabase } from "./config/supabase.js";
 
 /**
  * Normalize DB row → App object

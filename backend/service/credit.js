@@ -1,4 +1,4 @@
-import { supabase } from "../../config/supabase.js";
+import { supabase } from "../config/supabase.js";
 
 const MIN_START_CREDITS = 100;
 

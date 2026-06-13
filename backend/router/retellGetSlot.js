@@ -1,5 +1,5 @@
 import express from "express";
-import { supabase } from "../../config/supabase.js";
+import { supabase } from "../config/supabase.js";
 
 const router = express.Router();
 router.post("/retell/get-slots", async (req, res) => {

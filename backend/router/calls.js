@@ -1,7 +1,7 @@
 import express from "express";
 import axios from "axios";
 import { requireAuth } from "../middleware/auth.js";
-import { supabase } from "../../config/supabase.js";
+import { supabase } from "../config/supabase.js";
 
 const router = express.Router();
 

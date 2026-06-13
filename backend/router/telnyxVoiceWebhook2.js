@@ -140,7 +140,7 @@ import axios from "axios";
 import { triggerMissedCallRecovery } from "../service/recovery.js";
 import { getClientByTelnyxNumber } from "../service/credit.js";
 import { logger } from "../utils/logger.js";
-import { supabase } from "../../config/supabase.js";
+import { supabase } from "../config/supabase.js";
 // import { createRetellLiveCall } from "../service/retell.js";
 import { transferCallToRetellSip } from "../service/telnyx.js";
 

@@ -20,7 +20,7 @@ import googleAuthBooking from "./router/googleAuth.js";
 
 
 import callHistory from "./router/callHistory.js";
-import { supabase } from "../config/supabase.js";
+import { supabase } from "./config/supabase.js";
 import { addCallJob } from "./queue/queue.js";
 
 

@@ -1,5 +1,5 @@
 import express from "express";
-import { supabase } from "../../config/supabase.js";
+import { supabase } from "../config/supabase.js";
 import { createBillingTransaction } from "../service/billingTransaction.js";
 import {
   deductCreditsAtomic,
