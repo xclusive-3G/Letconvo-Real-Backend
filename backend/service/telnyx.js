@@ -37,45 +37,16 @@ export async function sendMissedCallSms(to) {
 }
 
 
-async function answerCall(callControlId) {
-  const response = await axios.post(
-    `https://api.telnyx.com/v2/calls/${callControlId}/actions/answer`,
-    {},
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.TELNYX_API_KEY}`,
-        "Content-Type": "application/json"
-      }
-    }
-  );
-
-  return response.data;
-}
-
-// Telnyx's transfer action requires the call to already be answered — calling
-// it immediately on call.initiated races an implicit auto-answer and
-// intermittently fails with a 422 ("call has already ended" / invalid state).
-// Answering explicitly first removes that race.
+// NOTE: this connection is an FQDN/SIP-trunk-style Telnyx connection, not a
+// traditional Call Control app — Telnyx rejects an explicit /actions/answer
+// on these calls with "Can not issue an answer command on an outbound call"
+// (code 90102), even though the call is genuinely inbound from our side.
+// Do not add an answer step here; transfer directly.
 export async function transferCallToRetellSip({
   callControlId,
   retellAgentId
 }) {
   const sipUri = `sip:${retellAgentId}@sip.retellai.com`;
-
-  try {
-    await answerCall(callControlId);
-  } catch (err) {
-    // Already answered (e.g. by a prior webhook retry) is fine to ignore —
-    // any other failure here means the call itself is gone, so transfer
-    // would fail too; let it surface below via the same error path.
-    const alreadyAnswered = err.response?.data?.errors?.some(
-      (e) => String(e?.code) === "90009" || /already answered/i.test(e?.detail || "")
-    );
-    if (!alreadyAnswered) {
-      console.error("❌ Telnyx answer failed:", JSON.stringify(err.response?.data || err.message, null, 2));
-      throw err;
-    }
-  }
 
   try {
     const response = await axios.post(
