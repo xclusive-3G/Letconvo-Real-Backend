@@ -1,6 +1,7 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
+import { reconcileClientCalls } from "../service/retellReconciliation.js";
 // import {
 //   getLiveCalls
 // } from "../service/liveCalls.js";
@@ -1355,6 +1356,22 @@ router.get("/me/alerts", requireAuth, async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+// Pulls this client's call history directly from Retell (by agent_id) and
+// backfills any calls missing from retell_call_logs. Retell's push webhook
+// has proven unreliable in practice, so the dashboard calls this to
+// reconcile reality instead of only trusting whatever the webhook delivered.
+router.post("/me/reconcile-calls", requireAuth, async (req, res) => {
+  try {
+    const client = await getClientByUserId(req.user.id, "id");
+    const result = await reconcileClientCalls(client.id);
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("❌ Reconcile calls error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.get("/me/live-calls", requireAuth, async (req, res) => {
   try {
     const client = await getClientByUserId(req.user.id, "id");
