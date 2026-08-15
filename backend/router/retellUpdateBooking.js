@@ -1,28 +1,59 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
+import {
+  findLatestBooking,
+  BOOKING_STATUSES
+} from "../utils/bookings.js";
+
 const router = express.Router();
 
+// Called by the Retell agent to confirm, cancel, or reschedule a booking.
 router.post("/retell/update-booking", async (req, res) => {
-  const { phone, status, new_time } = req.body;
+  const { clientId, phone, status, newDate, newTime } = req.body;
 
-  // Strip + sign
-  const cleanPhone = String(phone).replace("+", "");
+  if (!clientId || !phone) {
+    return res.json({ success: false, error: "clientId and phone are required" });
+  }
+
+  if (status && !BOOKING_STATUSES.includes(status)) {
+    return res.json({
+      success: false,
+      error: `status must be one of: ${BOOKING_STATUSES.join(", ")}`
+    });
+  }
 
   try {
-    const updates = { status };
-    if (new_time) updates.new_time = new_time;
+    const existing = await findLatestBooking(clientId, phone);
 
-    const { error } = await supabase
-      .from("BarberShop")
+    if (!existing) {
+      return res.json({ success: false, error: "No booking found for that phone number" });
+    }
+
+    const updates = { updated_at: new Date().toISOString() };
+
+    if (newDate) updates.appointment_date = newDate;
+    if (newTime) updates.appointment_time = newTime;
+
+    if (status) {
+      updates.status = status;
+    } else if (newDate || newTime) {
+      updates.status = "rescheduled";
+    }
+
+    const { data, error } = await supabase
+      .from("bookings")
       .update(updates)
-      .eq("phone", cleanPhone);
+      .eq("id", existing.id)
+      .select()
+      .single();
 
-    if (error) return res.json({ success: false, error: error.message });
-    return res.json({ success: true });
+    if (error) throw error;
+
+    return res.json({ success: true, booking: data });
 
   } catch (err) {
     console.error("❌ update-booking error:", err);
-    return res.status(500).json({ success: false });
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 

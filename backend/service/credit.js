@@ -1,4 +1,5 @@
 import { supabase } from "../config/supabase.js";
+import { createNotification } from "../utils/createNotification.js";
 
 const MIN_START_CREDITS = 100;
 
@@ -176,6 +177,13 @@ export async function pauseClientIfLowCredits(clientId, minimumCredits = 100) {
       businessName: data.business_name,
       credits: data.credits_remaining,
       status: data.status
+    });
+
+    await createNotification({
+      clientId: data.id,
+      title: "Low credit balance",
+      message: `Your account has been paused — only ${data.credits_remaining} credits remaining. Please top up to resume service.`,
+      type: "alert"
     });
 
     return data;

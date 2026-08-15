@@ -1,35 +1,62 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
+import { getBusinessHours, ACTIVE_STATUSES } from "../utils/bookings.js";
 
 const router = express.Router();
+
+// Called by the Retell agent mid-call to find open appointment slots.
 router.post("/retell/get-slots", async (req, res) => {
   console.log("📅 Fetching available slots...");
 
   try {
+    const { clientId, days } = req.body;
+
+    if (!clientId) {
+      return res.status(400).json({ error: "clientId is required", slots: [] });
+    }
+
     const now = new Date();
-    const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const windowDays = Number(days) > 0 ? Number(days) : 7;
+    const windowEnd = new Date(now.getTime() + windowDays * 24 * 60 * 60 * 1000);
 
-    // Get already booked slots
-    const { data: booked } = await supabase
-      .from("BarberShop")
-      .select("appointment_time")
-      .gte("appointment_time", now.toISOString())
-      .lte("appointment_time", nextWeek.toISOString())
-      .in("status", ["confirmed", "calling"]);
+    const { openHour, closeHour } = await getBusinessHours(clientId);
 
-    // Build available slots (9am - 6pm, Mon-Sat)
-    const bookedTimes = (booked || []).map(b => b.appointment_time);
+    const todayStr = now.toISOString().slice(0, 10);
+    const endStr = windowEnd.toISOString().slice(0, 10);
+
+    // Get already booked slots for this business in the window.
+    const { data: booked, error: bookedError } = await supabase
+      .from("bookings")
+      .select("appointment_date, appointment_time")
+      .eq("client_id", clientId)
+      .gte("appointment_date", todayStr)
+      .lte("appointment_date", endStr)
+      .in("status", ACTIVE_STATUSES);
+
+    if (bookedError) throw bookedError;
+
+    const bookedKeys = new Set(
+      (booked || []).map(
+        (b) => `${b.appointment_date}T${String(b.appointment_time).slice(0, 5)}`
+      )
+    );
+
+    // Build available slots, one per hour, within business hours, skipping Sundays.
     const slots = [];
     const cursor = new Date(now);
-    cursor.setHours(cursor.getHours() + 1, 0, 0, 0);
+    cursor.setMinutes(0, 0, 0);
+    cursor.setHours(cursor.getHours() + 1);
 
-    while (cursor <= nextWeek && slots.length < 6) {
+    while (cursor <= windowEnd && slots.length < 12) {
       const day = cursor.getDay();
       const hour = cursor.getHours();
 
-      if (day !== 0 && hour >= 9 && hour < 18) {
-        const iso = cursor.toISOString();
-        if (!bookedTimes.includes(iso)) {
+      if (day !== 0 && hour >= openHour && hour < closeHour) {
+        const dateStr = cursor.toISOString().slice(0, 10);
+        const timeStr = `${String(hour).padStart(2, "0")}:00`;
+        const key = `${dateStr}T${timeStr}`;
+
+        if (!bookedKeys.has(key)) {
           slots.push({
             date: cursor.toLocaleDateString("en-US", {
               weekday: "long",
@@ -40,7 +67,9 @@ router.post("/retell/get-slots", async (req, res) => {
               hour: "2-digit",
               minute: "2-digit"
             }),
-            iso
+            raw_date: dateStr,
+            raw_time: timeStr,
+            iso: cursor.toISOString()
           });
         }
       }
@@ -51,7 +80,7 @@ router.post("/retell/get-slots", async (req, res) => {
 
   } catch (err) {
     console.error("❌ get-slots error:", err);
-    return res.status(500).json({ slots: [] });
+    return res.status(500).json({ slots: [], error: err.message });
   }
 });
 

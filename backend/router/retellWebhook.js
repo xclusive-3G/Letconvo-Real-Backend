@@ -6,7 +6,7 @@ import {
   pauseClientIfLowCredits
 } from "../service/credit.js";
 
-import { liveCalls } from "../utils/liveCallsStore.js";
+import { createNotification } from "../utils/createNotification.js";
 
 // import {
 //   addLiveCall,
@@ -145,36 +145,28 @@ router.post("/retell/webhook", async (req, res) => {
   eventType === "call_initiated" ||
   eventType === "call_created"
 ) {
-  // await addLiveCall({
-  //   callId: retellCallId,
-  //   clientId,
+  const { error: activeCallError } = await supabase
+    .from("active_calls")
+    .insert({
+      client_id: clientId,
+      call_id: retellCallId,
+      caller_phone: getCallerPhone(call),
+      business_number: getBusinessNumber(call),
+      provider: "retell",
+      status: "active"
+    });
 
-  //   caller: getCallerPhone(call) || "Unknown caller",
-  //   businessNumber: getBusinessNumber(call),
+  if (activeCallError) {
+    console.error("❌ Failed to record active call:", activeCallError);
+  }
 
-  //   provider: "retell",
-  //   startedAt: Date.now()
-  // });
-
-  // console.log("📞 Active caller added:", {
-  //   retellCallId,
-  //   clientId,
-  //   caller: getCallerPhone(call)
-  // });
-
-  liveCalls.set(retellCallId, {
-    callId: retellCallId,
+  console.log("📞 Active caller added:", {
+    retellCallId,
     clientId,
-    caller: getCallerPhone(call),
-    businessNumber: getBusinessNumber(call),
-    startedAt: Date.now()
+    caller: getCallerPhone(call)
   });
 
-  console.log("📞 Active callers:", liveCalls.size);
-
   return res.json({ success: true });
-
-  // return res.status(200).json({ success: true });
 }
 
 
@@ -249,34 +241,8 @@ router.post("/retell/webhook", async (req, res) => {
     if (eventType !== "call_ended") {
       return res.status(200).json({ received: true });
     }
-    if (eventType === "call_ended") {
 
-  liveCalls.delete(retellCallId);
-
-  console.log("☎️ Active callers:", liveCalls.size);
-
-  // Continue billing...
-}
-
-    const metadata =
-  req.body.call?.metadata || {};
-
-// // await removeLiveCall(
-//   metadata.clientId,
-//   req.body.call.call_id
-// );
-if (eventType === "call_ended") {
-
-  liveCalls.delete(retellCallId);
-
-  console.log("☎️ Active callers:", liveCalls.size);
-
-  // Continue billing...
-}
-
-console.log(
-  "☎️ Active caller removed"
-);
+    console.log("☎️ Active caller removed:", retellCallId);
 
     await supabase
       .from("active_calls")
@@ -358,6 +324,15 @@ console.log(
 
       console.log("⛔ Failed call saved without billing:", retellCallId);
 
+      if (failedReasons.includes(call?.disconnection_reason)) {
+        await createNotification({
+          clientId,
+          title: "Missed call",
+          message: `Missed call from ${getCallerPhone(call) || "unknown number"}`,
+          type: "call"
+        });
+      }
+
       return res.status(200).json({ success: true });
     }
 
@@ -433,6 +408,13 @@ console.log(
       deducted,
       caller: getCallerPhone(call),
       recording: getRecordingUrl(call)
+    });
+
+    await createNotification({
+      clientId,
+      title: "Call completed",
+      message: `${getCallerPhone(call) || "Unknown caller"} · ${durationMinutes} min`,
+      type: "call"
     });
 
     return res.status(200).json({ success: true });

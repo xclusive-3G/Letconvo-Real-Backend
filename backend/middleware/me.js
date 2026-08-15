@@ -7,15 +7,73 @@ import { requireAuth } from "../middleware/auth.js";
 
 const router = express.Router();
 
+// Uses select+limit(1) instead of .single() so a pre-existing duplicate
+// row (e.g. from a double-submitted signup) can't take down every
+// dashboard route with a raw "multiple rows returned" Postgrest error —
+// it deterministically picks the oldest row instead. Throws the same
+// PGRST116-shaped error .single() would on zero rows, since callers
+// (like /me/client) already branch on that code to mean "no business yet".
 const getClientByUserId = async (userId, select = "*") => {
   const { data, error } = await supabase
     .from("clients")
     .select(select)
     .eq("user_id", userId)
-    .single();
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (error) throw error;
+  if (!data || data.length === 0) {
+    const notFound = new Error("JSON object requested, no rows returned");
+    notFound.code = "PGRST116";
+    throw notFound;
+  }
+  return data[0];
+};
+
+const resolveClientPlan = async (client) => {
+  if (client.plan_id) {
+    const { data, error } = await supabase
+      .from("plans")
+      .select("*")
+      .eq("id", client.plan_id)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (data) return data;
+  }
+
+  const planSlug = client.plan_slug || client.plan || "starter";
+
+  const { data, error } = await supabase
+    .from("plans")
+    .select("*")
+    .eq("slug", planSlug)
+    .maybeSingle();
 
   if (error) throw error;
   return data;
+};
+
+const getMonthlyMinutesUsed = async (clientId) => {
+  const { data: calls = [], error } = await supabase
+    .from("retell_call_logs")
+    .select("duration_minutes, created_at")
+    .eq("client_id", clientId);
+
+  if (error) throw error;
+
+  const now = new Date();
+
+  return calls
+    .filter((c) => {
+      if (!c.created_at) return false;
+      const d = new Date(c.created_at);
+      return (
+        d.getMonth() === now.getMonth() &&
+        d.getFullYear() === now.getFullYear()
+      );
+    })
+    .reduce((sum, c) => sum + Number(c.duration_minutes || 0), 0);
 };
 
 const getTodayTrend = (calls = []) => {
@@ -82,6 +140,16 @@ router.get("/me/client", requireAuth, async (req, res) => {
       }
     });
   } catch (err) {
+    // PGRST116 = no matching row — a valid, authenticated user who just
+    // hasn't completed business signup yet (e.g. fresh Google sign-in).
+    // That's not a server error, so tell the frontend clearly.
+    if (err.code === "PGRST116") {
+      return res.status(404).json({
+        error: "No business account found for this user yet.",
+        needsSignup: true
+      });
+    }
+
     console.error("❌ Fetch client error:", err);
     return res.status(500).json({ error: err.message });
   }
@@ -132,8 +200,15 @@ router.get("/me/dashboard-stats", requireAuth, async (req, res) => {
       0
     );
 
+    // Only average over calls that actually connected — a call that never
+    // connected (busy/no-answer/invalid number) has duration_ms = 0 and
+    // would otherwise drag the average down and misrepresent real call length.
+    const connectedCalls = calls.filter((call) => Number(call.duration_ms || 0) > 0);
+
     const avgDurationSeconds =
-      calls.length > 0 ? Math.round(totalDurationMs / calls.length / 1000) : 0;
+      connectedCalls.length > 0
+        ? Math.round(totalDurationMs / connectedCalls.length / 1000)
+        : 0;
 
     const avgDuration =
       avgDurationSeconds >= 60
@@ -180,6 +255,17 @@ router.get("/me/dashboard-stats", requireAuth, async (req, res) => {
 
     if (activeCallsError) throw activeCallsError;
 
+    const todayDateStr = new Date().toISOString().slice(0, 10);
+
+    const { data: todaysBookings = [], error: bookingsError } = await supabase
+      .from("bookings")
+      .select("id, status")
+      .eq("client_id", client.id)
+      .eq("appointment_date", todayDateStr)
+      .in("status", ["pending", "confirmed", "rescheduled"]);
+
+    if (bookingsError) throw bookingsError;
+
     const weeklyData = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
       (day) => ({ day, calls: 0 })
     );
@@ -203,7 +289,7 @@ router.get("/me/dashboard-stats", requireAuth, async (req, res) => {
         callsChangePercent,
         callsTrend,
 
-        appointmentsBooked: 0,
+        appointmentsBooked: todaysBookings.length,
         leadsQualified: completedCalls.length,
         missedCalls: missedCalls.length,
 
@@ -254,6 +340,56 @@ router.get("/me/calls", requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Calls error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/me/appointments", requireAuth, async (req, res) => {
+  try {
+    const client = await getClientByUserId(req.user.id, "id");
+
+    const { data: appointments = [], error } = await supabase
+      .from("bookings")
+      .select("*")
+      .eq("client_id", client.id)
+      .order("appointment_date", { ascending: true })
+      .order("appointment_time", { ascending: true });
+
+    if (error) throw error;
+
+    return res.json({ success: true, appointments });
+  } catch (err) {
+    console.error("❌ Appointments error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch("/me/appointments/:id", requireAuth, async (req, res) => {
+  try {
+    const client = await getClientByUserId(req.user.id, "id");
+    const { id } = req.params;
+    const { status, notes, appointment_date, appointment_time } = req.body;
+
+    const updates = { updated_at: new Date().toISOString() };
+    if (status !== undefined) updates.status = status;
+    if (notes !== undefined) updates.notes = notes;
+    if (appointment_date !== undefined) updates.appointment_date = appointment_date;
+    if (appointment_time !== undefined) updates.appointment_time = appointment_time;
+
+    const { data, error } = await supabase
+      .from("bookings")
+      .update(updates)
+      .eq("id", id)
+      .eq("client_id", client.id) // scoped to this business, can't touch other clients' bookings
+      .select()
+      .single();
+
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: "Appointment not found" });
+
+    return res.json({ success: true, appointment: data });
+  } catch (err) {
+    console.error("❌ Update appointment error:", err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -665,8 +801,14 @@ router.get("/me/analytics", requireAuth, async (req, res) => {
       0
     );
 
+    // Same reasoning as /me/dashboard-stats: exclude never-connected calls
+    // (duration_ms = 0) from the average so it reflects real call length.
+    const connectedCalls = calls.filter((c) => Number(c.duration_ms || 0) > 0);
+
     const avgSec =
-      totalCalls > 0 ? Math.round(totalDurationMs / totalCalls / 1000) : 0;
+      connectedCalls.length > 0
+        ? Math.round(totalDurationMs / connectedCalls.length / 1000)
+        : 0;
 
     const avgDuration =
       avgSec >= 60
@@ -724,6 +866,66 @@ router.get("/me/analytics", requireAuth, async (req, res) => {
       if (row) row.calls += 1;
     });
 
+    const satisfaction =
+      totalCalls > 0
+        ? `${((sentimentCounts.positive / totalCalls) * 5).toFixed(1)}/5`
+        : "0/5";
+
+    const npsScore =
+      totalCalls > 0
+        ? Math.round(
+            ((sentimentCounts.positive - sentimentCounts.negative) /
+              totalCalls) *
+              100
+          )
+        : 0;
+
+    const successfulCalls = calls.filter(
+      (c) =>
+        c.raw_payload?.call?.call_analysis?.call_successful === true ||
+        c.raw_payload?.data?.call_analysis?.call_successful === true
+    ).length;
+
+    const firstCallResolution =
+      totalCalls > 0 ? Math.round((successfulCalls / totalCalls) * 100) : 0;
+
+    const normalizeCallerPhone = (phone) =>
+      String(phone || "")
+        .replace(/\s+/g, "")
+        .replace(/[^\d+]/g, "");
+
+    const callerCounts = {};
+
+    calls.forEach((call) => {
+      const phone = normalizeCallerPhone(call.caller_phone);
+      if (!phone) return;
+      callerCounts[phone] = (callerCounts[phone] || 0) + 1;
+    });
+
+    const uniqueCallerCount = Object.keys(callerCounts).length;
+
+    const repeatCallerCount = Object.values(callerCounts).filter(
+      (count) => count > 1
+    ).length;
+
+    const repeatCallerRate =
+      uniqueCallerCount > 0
+        ? Math.round((repeatCallerCount / uniqueCallerCount) * 100)
+        : 0;
+
+    const { data: periodBookings = [], error: bookingsError } = await supabase
+      .from("bookings")
+      .select("id, created_at")
+      .eq("client_id", client.id)
+      .gte("created_at", currentStart.toISOString());
+
+    if (bookingsError) throw bookingsError;
+
+    const bookingConversion =
+      totalCalls > 0
+        ? Math.round((periodBookings.length / totalCalls) * 100)
+        : 0;
+
     return res.json({
       success: true,
       period,
@@ -736,7 +938,7 @@ router.get("/me/analytics", requireAuth, async (req, res) => {
 
         answeredRate,
         avgDuration,
-        satisfaction: totalCalls > 0 ? "4.8/5" : "0/5",
+        satisfaction,
 
         callStatus: {
           completed,
@@ -750,12 +952,12 @@ router.get("/me/analytics", requireAuth, async (req, res) => {
 
         keyMetrics: {
           answerRate: `${answeredRate}%`,
-          firstCallResolution: "0%",
+          firstCallResolution: `${firstCallResolution}%`,
           avgWaitTime: "0s",
           transferRate: `${transferRate}%`,
-          bookingConversion: "0%",
-          repeatCallers: "0%",
-          npsScore: 0
+          bookingConversion: `${bookingConversion}%`,
+          repeatCallers: `${repeatCallerRate}%`,
+          npsScore
         }
       }
     });
@@ -777,15 +979,8 @@ router.get("/me/settings", requireAuth, async (req, res) => {
 
     if (settingsError) throw settingsError;
 
-    const planSlug = client.plan_slug || client.plan || "starter";
-
-    const { data: plan, error: planError } = await supabase
-      .from("plans")
-      .select("*")
-      .eq("slug", planSlug)
-      .maybeSingle();
-
-    if (planError) throw planError;
+    const plan = await resolveClientPlan(client);
+    const usedMinutes = await getMonthlyMinutesUsed(client.id);
 
     return res.json({
       success: true,
@@ -809,7 +1004,7 @@ router.get("/me/settings", requireAuth, async (req, res) => {
           slug: plan?.slug || "starter",
           monthlyPrice: Number(plan?.price_usd || 0),
           includedMinutes: Number(plan?.monthly_credits || 0),
-          usedMinutes: Number(client.used_minutes || 0),
+          usedMinutes,
           renewalDate: client.renewal_date || null,
           minStartCredits: Number(plan?.min_start_credits || 0)
         }
@@ -941,15 +1136,7 @@ router.get("/me/billing/summary", requireAuth, async (req, res) => {
   try {
     const client = await getClientByUserId(req.user.id);
 
-    const planSlug = client.plan_slug || client.plan || "starter";
-
-    const { data: plan, error: planError } = await supabase
-      .from("plans")
-      .select("*")
-      .eq("slug", planSlug)
-      .maybeSingle();
-
-    if (planError) throw planError;
+    const plan = await resolveClientPlan(client);
 
     const { data: calls = [], error: callsError } = await supabase
       .from("retell_call_logs")
@@ -1095,8 +1282,14 @@ router.get("/me/todays-performance", requireAuth, async (req, res) => {
       0
     );
 
+    // Exclude never-connected calls (duration_ms = 0) so this reflects the
+    // real handle time of calls that actually happened.
+    const connectedCalls = calls.filter((c) => Number(c.duration_ms || 0) > 0);
+
     const avgSec =
-      totalCalls > 0 ? Math.round(totalDurationMs / totalCalls / 1000) : 0;
+      connectedCalls.length > 0
+        ? Math.round(totalDurationMs / connectedCalls.length / 1000)
+        : 0;
 
     const avgHandleTime =
       avgSec >= 60
@@ -1162,56 +1355,40 @@ router.get("/me/alerts", requireAuth, async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
-// router.get("/me/live-calls", requireAuth, async (req, res) => {
-//   try {
-//     const client = await getClientByUserId(req.user.id, "id");
-
-//     const { data: activeCalls = [], error } = await supabase
-//       .from("active_calls")
-//       .select("*")
-//       .eq("client_id", client.id)
-//       .eq("status", "active")
-//       .order("started_at", { ascending: false });
-
-//     if (error) throw error;
-
-//     return res.json({
-//       success: true,
-//       queueCount: 0,
-//       liveCalls: activeCalls.map((c) => ({
-//         id: c.id,
-//         callId: c.call_id,
-//         caller: c.caller_phone || "Unknown caller",
-//         number: c.caller_phone || "-",
-//         businessNumber: c.business_number || "-",
-//         duration: Math.floor(
-//           (Date.now() - new Date(c.started_at).getTime()) / 1000
-//         ),
-//         status: c.status || "active",
-//         intent: c.intent || "Live call",
-//         sentiment: c.sentiment || "neutral",
-//         transcript: Array.isArray(c.transcript) ? c.transcript : []
-//       }))
-//     });
-//   } catch (err) {
-//     console.error("❌ Live calls error:", err);
-//     return res.status(500).json({ error: err.message });
-//   }
-// });
-
-
 router.get("/me/live-calls", requireAuth, async (req, res) => {
-  const client = await getClientByUserId(req.user.id, "id");
+  try {
+    const client = await getClientByUserId(req.user.id, "id");
 
-  const calls = [...liveCalls.values()].filter(
-    c => c.clientId === client.id
-  );
+    const { data: activeCalls = [], error } = await supabase
+      .from("active_calls")
+      .select("*")
+      .eq("client_id", client.id)
+      .eq("status", "active")
+      .order("started_at", { ascending: false });
 
-  res.json({
-    success: true,
-    activeCount: calls.length,
-    liveCalls: calls
-  });
+    if (error) throw error;
+
+    const calls = activeCalls.map((c) => ({
+      id: c.id,
+      callId: c.call_id,
+      caller: c.caller_phone || "Unknown caller",
+      businessNumber: c.business_number || "-",
+      startedAt: new Date(c.started_at).getTime(),
+      duration: Math.floor(
+        (Date.now() - new Date(c.started_at).getTime()) / 1000
+      ),
+      status: c.status || "active"
+    }));
+
+    return res.json({
+      success: true,
+      activeCount: calls.length,
+      liveCalls: calls
+    });
+  } catch (err) {
+    console.error("❌ Live calls error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 router.get("/me/phone-setup", requireAuth, async (req, res) => {
@@ -1359,94 +1536,70 @@ router.post("/me/phone-setup/verify", requireAuth, async (req, res) => {
   }
 });
 
-router.get(
-  "/me/live-calls",
-  requireAuth,
-  async (req, res) => {
-    try {
-      const client =
-        await getClientByUserId(
-          req.user.id,
-          "id"
-        );
-
-      // const calls =
-      //   await getLiveCalls(
-      //     client.id
-      //   );
-
-      return res.json({
-        success: true,
-        activeCount:
-          calls.length,
-
-        liveCalls: calls.map(
-          (call) => ({
-            ...call,
-
-            duration:
-              Math.floor(
-                (Date.now() -
-                  call.startedAt) /
-                  1000
-              )
-          })
-        )
-      });
-    } catch (err) {
-      console.error(err);
-
-      return res
-        .status(500)
-        .json({
-          error:
-            err.message
-        });
-    }
-  }
-);
-
-import { liveCalls } from "../utils/liveCallsStore.js";
-
-router.get("/me/live-calls", requireAuth, async (req, res) => {
-  const client = await getClientByUserId(req.user.id, "id");
-
-  const calls = [...liveCalls.values()].filter(
-    c => c.clientId === client.id
-  );
-
-  res.json({
-    success: true,
-    activeCount: calls.length,
-    liveCalls: calls
-  });
-});
-
 router.get("/me/notifications", requireAuth, async (req, res) => {
-  const client = await getClientByUserId(req.user.id, "id");
+  try {
+    const client = await getClientByUserId(req.user.id, "id");
 
-  const { data } = await supabase
-    .from("notifications")
-    .select("*")
-    .eq("client_id", client.id)
-    .order("created_at", { ascending: false })
-    .limit(50);
+    const { data, error } = await supabase
+      .from("notifications")
+      .select("*")
+      .eq("client_id", client.id)
+      .order("created_at", { ascending: false })
+      .limit(50);
 
-  res.json(data);
+    if (error) throw error;
+
+    return res.json({ success: true, notifications: data || [] });
+  } catch (err) {
+    console.error("❌ Notifications error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 router.patch(
   "/me/notifications/:id/read",
   requireAuth,
   async (req, res) => {
-    const { id } = req.params;
+    try {
+      const client = await getClientByUserId(req.user.id, "id");
+      const { id } = req.params;
 
-    await supabase
-      .from("notifications")
-      .update({ is_read: true })
-      .eq("id", id);
+      const { error } = await supabase
+        .from("notifications")
+        .update({ is_read: true })
+        .eq("id", id)
+        .eq("client_id", client.id);
 
-    res.json({ success: true });
+      if (error) throw error;
+
+      return res.json({ success: true });
+    } catch (err) {
+      console.error("❌ Mark notification read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+router.patch(
+  "/me/notifications/read-all",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const client = await getClientByUserId(req.user.id, "id");
+
+      const { error } = await supabase
+        .from("notifications")
+        .update({ is_read: true })
+        .eq("client_id", client.id)
+        .eq("is_read", false);
+
+      if (error) throw error;
+
+      return res.json({ success: true });
+    } catch (err) {
+      console.error("❌ Mark all notifications read error:", err);
+      return res.status(500).json({ error: err.message });
+    }
   }
 );
 
@@ -1454,18 +1607,25 @@ router.get(
   "/me/notifications/unread-count",
   requireAuth,
   async (req, res) => {
-    const client = await getClientByUserId(req.user.id, "id");
+    try {
+      const client = await getClientByUserId(req.user.id, "id");
 
-    const { count } = await supabase
-      .from("notifications")
-      .select("*", {
-        count: "exact",
-        head: true
-      })
-      .eq("client_id", client.id)
-      .eq("is_read", false);
+      const { count, error } = await supabase
+        .from("notifications")
+        .select("*", {
+          count: "exact",
+          head: true
+        })
+        .eq("client_id", client.id)
+        .eq("is_read", false);
 
-    res.json({ count });
+      if (error) throw error;
+
+      return res.json({ success: true, count: count || 0 });
+    } catch (err) {
+      console.error("❌ Unread count error:", err);
+      return res.status(500).json({ error: err.message });
+    }
   }
 );
 

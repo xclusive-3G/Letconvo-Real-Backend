@@ -1,11 +1,11 @@
+import dotenv from "dotenv";
+dotenv.config();
 import { Queue } from "bullmq";
 import Redis from "ioredis";
 
-const connection = new Redis({
-  host: "redis-18739.crce262.us-east-1-1.ec2.cloud.redislabs.com",
-  port: 18739,
-  password: "B5Lwmliy1PHVCZvIHfXBMd1KTMPo5zVd",
-  maxRetriesPerRequest: null,
+
+const connection = new Redis(process.env.REDIS_URL, {
+  maxRetriesPerRequest: null
 });
 
 export const callQueue = new Queue("call-queue", {

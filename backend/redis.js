@@ -1,13 +1,17 @@
+import dotenv from "dotenv";
+dotenv.config();
+import { Queue } from "bullmq";
 import Redis from "ioredis";
+
 
 import { createClient } from 'redis';
 
 export const client = createClient({
     username: 'default',
-    password: 'B5Lwmliy1PHVCZvIHfXBMd1KTMPo5zVd',
+    password: process.env.REDIS_PASSWORD,
     socket: {
-        host: 'redis-18739.crce262.us-east-1-1.ec2.cloud.redislabs.com',
-        port: 18739
+        host: process.env.REDIS_HOST,
+        port: process.env.REDIS_PORT
     }
 });
 

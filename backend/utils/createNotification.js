@@ -1,6 +1,4 @@
-// utils/createNotification.js
-
-import { supabase } from "../lib/supabase.js";
+import { supabase } from "../config/supabase.js";
 
 export async function createNotification({
   clientId,
@@ -8,7 +6,7 @@ export async function createNotification({
   message,
   type = "info"
 }) {
-  return supabase
+  const { error } = await supabase
     .from("notifications")
     .insert({
       client_id: clientId,
@@ -16,4 +14,8 @@ export async function createNotification({
       message,
       type
     });
+
+  if (error) {
+    console.error("❌ Failed to create notification:", error);
+  }
 }

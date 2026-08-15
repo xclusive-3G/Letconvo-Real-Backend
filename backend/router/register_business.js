@@ -21,7 +21,18 @@ router.post("/register-business", async (req, res) => {
       password
     } = req.body;
 
-    if (!ownerEmail || !password) {
+    // A Google (or other OAuth) sign-in already creates the Supabase auth
+    // user before this endpoint is ever called — GetStartedPage sends that
+    // session's access token instead of a password in that case.
+    const bearerToken = req.headers.authorization?.replace("Bearer ", "");
+    let oauthUser = null;
+
+    if (bearerToken) {
+      const { data, error } = await supabase.auth.getUser(bearerToken);
+      if (!error && data?.user) oauthUser = data.user;
+    }
+
+    if (!oauthUser && (!ownerEmail || !password)) {
       return res.status(400).json({ error: "Owner email and password are required" });
     }
 
@@ -29,7 +40,7 @@ router.post("/register-business", async (req, res) => {
     const { data: existingClient, error: existingError } = await supabase
       .from("clients")
       .select("*")
-      .eq("ownerEmail", ownerEmail)
+      .eq(oauthUser ? "user_id" : "ownerEmail", oauthUser ? oauthUser.id : ownerEmail)
       .maybeSingle();
 
     if (existingError) throw existingError;
@@ -40,17 +51,22 @@ router.post("/register-business", async (req, res) => {
       });
     }
 
-    // 2. Create Supabase Auth user from backend
-    const { data: authData, error: authError } =
-      await supabase.auth.admin.createUser({
-        email: ownerEmail,
-        password,
-        email_confirm: true
-      });
+    // 2. Reuse the OAuth session's user, or create a new Supabase Auth user
+    let user;
 
-    if (authError) throw authError;
+    if (oauthUser) {
+      user = oauthUser;
+    } else {
+      const { data: authData, error: authError } =
+        await supabase.auth.admin.createUser({
+          email: ownerEmail,
+          password,
+          email_confirm: true
+        });
 
-    const user = authData.user;
+      if (authError) throw authError;
+      user = authData.user;
+    }
 
     if (!user?.id) {
       return res.status(500).json({ error: "Failed to create auth user" });
@@ -77,8 +93,8 @@ router.post("/register-business", async (req, res) => {
         phone: businessPhone,
         credits_remaining: selectedPlan.monthly_credits,
         status: "active",
-        ownerName,
-        ownerEmail,
+        ownerName: ownerName || oauthUser?.user_metadata?.full_name || oauthUser?.user_metadata?.name || "",
+        ownerEmail: ownerEmail || oauthUser?.email,
         receptionist_mode: receptionistMode,
         plan_id: selectedPlan.id
       })
@@ -86,6 +102,34 @@ router.post("/register-business", async (req, res) => {
       .single();
 
     if (clientError) throw clientError;
+
+    // 3b. Guard against the TOCTOU race between the "already exists" check
+    // above and this insert (e.g. a double-submitted signup form): if a
+    // sibling row for this user_id now exists, only the oldest one wins.
+    // Every concurrent request converges on the same decision independently,
+    // so the losing row(s) always end up deleted regardless of which
+    // request runs this check first.
+    const { data: siblings, error: siblingsError } = await supabase
+      .from("clients")
+      .select("id, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true });
+
+    if (siblingsError) throw siblingsError;
+
+    if (siblings.length > 1) {
+      const canonical = siblings[0];
+      const losers = siblings.slice(1).map((c) => c.id);
+
+      await supabase.from("client_settings").delete().in("client_id", losers);
+      await supabase.from("clients").delete().in("id", losers);
+
+      if (canonical.id !== client.id) {
+        return res.status(409).json({
+          error: "Business account already exists. Please login instead."
+        });
+      }
+    }
 
     // 4. Create client settings
     const { error: settingsError } = await supabase
@@ -99,7 +143,7 @@ router.post("/register-business", async (req, res) => {
         open_hour: openTime,
         close_hour: closeTime,
         businessType,
-        email: ownerEmail,
+        email: ownerEmail || oauthUser?.email,
         plan
       });
 
@@ -117,20 +161,26 @@ router.post("/register-business", async (req, res) => {
 
     // if (numberError) throw numberError;
 
-    // 6. Login user after registration
-    const { data: loginData, error: loginError } =
-      await supabase.auth.signInWithPassword({
-        email: ownerEmail,
-        password
-      });
+    // 6. Get a fresh session — the OAuth user already has one (reuse its
+    // token), otherwise sign in the freshly-created email/password user.
+    let accessToken = bearerToken;
 
-    if (loginError) throw loginError;
+    if (!oauthUser) {
+      const { data: loginData, error: loginError } =
+        await supabase.auth.signInWithPassword({
+          email: ownerEmail,
+          password
+        });
+
+      if (loginError) throw loginError;
+      accessToken = loginData.session.access_token;
+    }
 
     return res.json({
       success: true,
       clientId: client.id,
       user,
-      access_token: loginData.session.access_token
+      access_token: accessToken
     });
   } catch (error) {
     console.error("❌ FULL ERROR:", error);

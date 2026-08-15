@@ -226,46 +226,6 @@ router.post("/telnyx/voice", async (req, res) => {
       return;
     }
 
-    if (client.receptionist_mode === "live") {
-      console.log("☎️ LIVE MODE → calling Retell immediately");
-
-      const { data: settings, error } = await supabase
-        .from("client_settings")
-        .select("retell_agent_id, retell_from_number")
-        .eq("client_id", client.id)
-        .maybeSingle();
-
-      if (error) {
-        console.log("❌ Error fetching client settings:", error.message);
-        await hangupCall(callControlId);
-        return;
-      }
-
-      if (!settings?.retell_agent_id || !settings?.retell_from_number) {
-        console.log("❌ Missing agent or number for client:", client.id);
-        await hangupCall(callControlId);
-        return;
-      }
-
-      // await createRetellLiveCall({
-      //   toNumber: callerPhone.trim(),
-      //   clientId: client.id,
-      //   agentId: settings.retell_agent_id.trim(),
-      //   fromNumber: settings.retell_from_number.trim()
-      // });
-
-      return;
-    }
-
-    console.log("📞 CALLBACK MODE → queuing missed-call recovery");
-
-    await triggerMissedCallRecovery({
-      clientId: client.id,
-      callerPhone,
-      forwardedToNumber: to,
-      telnyxCallControlId: callControlId
-    });
-
     const mode = String(client.receptionist_mode || "")
   .trim()
   .toLowerCase();

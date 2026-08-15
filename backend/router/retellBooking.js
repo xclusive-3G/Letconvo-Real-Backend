@@ -1,66 +1,45 @@
 import express from "express";
-import { supabase } from "../config/supabase.js";
+import {
+  findLatestBooking,
+  formatDateHuman,
+  formatTimeHuman
+} from "../utils/bookings.js";
 
 const router = express.Router();
 
+// Called by the Retell agent to look up an existing booking by phone number.
 router.post("/retell/get-booking", async (req, res) => {
-  const { phone } = req.body;
-  const cleanPhone = String(phone).replace("+", "");
+  const { clientId, phone } = req.body;
+
+  if (!clientId || !phone) {
+    return res.status(400).json({ found: false, error: "clientId and phone are required" });
+  }
 
   try {
-    const { data, error } = await supabase
-      .from("BarberShop")
-      .select("*")
-      .eq("phone", cleanPhone)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .single();
+    const data = await findLatestBooking(clientId, phone);
 
-    if (error || !data) {
+    if (!data) {
       return res.json({ found: false });
     }
 
-    // Build appointment datetime from date + time columns
-    const apptDate = data.date && data.time
-      ? new Date(`${data.date}T${data.time}`)
-      : null;
-
-    const formattedDate = apptDate
-      ? apptDate.toLocaleDateString("en-US", {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric"
-        })
-      : "date not set";
-
-    const formattedTime = apptDate
-      ? apptDate.toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit"
-        })
-      : "time not set";
-
     return res.json({
       found: true,
-      customer_name:    data.first_name || data.full_name || "there",
-      last_name:        data.last_name || "",
-      appointment_date: formattedDate,
-      appointment_time: formattedTime,
-      raw_date:         data.date,
-      raw_time:         data.time,
-      service:          data.service || data.service_type || "haircut",
-      barber:           data.barber || data.barber_name || "your barber",
-      booking_id:       data.id,
-      status:           data.status,
-      phone:            data.phone,
-      notes:            data.notes || "",
-      address:          data.address || "",
+      customer_name: data.customer_name || "there",
+      appointment_date: formatDateHuman(data.appointment_date),
+      appointment_time: formatTimeHuman(data.appointment_time),
+      raw_date: data.appointment_date,
+      raw_time: data.appointment_time,
+      service: data.service || "your appointment",
+      booking_id: data.id,
+      status: data.status,
+      phone: data.customer_phone,
+      notes: data.notes || ""
     });
 
   } catch (err) {
     console.error("❌ get-booking error:", err);
-    return res.status(500).json({ found: false });
+    return res.status(500).json({ found: false, error: err.message });
   }
 });
+
 export default router;
