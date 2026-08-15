@@ -9,7 +9,8 @@ const router = express.Router();
 
 // Called by the Retell agent to confirm, cancel, or reschedule a booking.
 router.post("/retell/update-booking", async (req, res) => {
-  const { clientId, phone, status, newDate, newTime } = req.body;
+  const clientId = req.body.clientId || req.query.clientId;
+  const { phone, status, newDate, newTime } = req.body;
 
   if (!clientId || !phone) {
     return res.json({ success: false, error: "clientId and phone are required" });

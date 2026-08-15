@@ -9,7 +9,8 @@ router.post("/retell/get-slots", async (req, res) => {
   console.log("📅 Fetching available slots...");
 
   try {
-    const { clientId, days } = req.body;
+    const clientId = req.body.clientId || req.query.clientId;
+    const { days } = req.body;
 
     if (!clientId) {
       return res.status(400).json({ error: "clientId is required", slots: [] });
