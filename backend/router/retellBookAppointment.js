@@ -8,8 +8,8 @@ const router = express.Router();
 // Called by the Retell agent (or a booking widget) to create an appointment.
 router.post("/book-appointment", async (req, res) => {
   try {
+    const clientId = req.body.clientId || req.query.clientId;
     const {
-      clientId,
       customerName,
       customerPhone,
       customerEmail,
