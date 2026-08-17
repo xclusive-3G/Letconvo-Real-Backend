@@ -17,6 +17,8 @@ import dashboardRoute from "./router/dashboardRoute.js";
 import meRoutes from "./middleware/me.js";
 import bookingRouter from "./router/booking.js";
 import googleAuthBooking from "./router/googleAuth.js";
+import billingRouter from "./router/billing.js";
+import stripeWebhookRouter from "./router/stripeWebhook.js";
 
 
 import callHistory from "./router/callHistory.js";
@@ -33,6 +35,14 @@ cors({
     allowedHeaders: ["Content-Type"],
     credentials: true
 });
+
+// Stripe needs the raw, unparsed request body to verify webhook signatures.
+// Scoped to this exact path (not "/") so express.json() below still works
+// normally for every other route — raw() would otherwise consume the
+// request stream for all of them too, since streams can only be read once.
+app.use("/webhooks/stripe", express.raw({ type: "application/json" }));
+app.use("/", stripeWebhookRouter);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -56,6 +66,7 @@ app.use("/api",registerBusinessRouter);
 app.use("/api", dashboardRoute);
 app.use("/api", meRoutes);
 app.use("/api", googleAuthBooking);
+app.use("/api", billingRouter);
 // app.use("/api", callsRoutes);
 // app.use("/api", callHistory);
 

@@ -3,6 +3,11 @@ import { supabase } from "../config/supabase.js";
 
 const router = express.Router();
 
+// Free trial balance every new signup starts with, regardless of the plan
+// they picked — separate from that plan's monthly_credits, which only
+// applies once they actually subscribe.
+const TRIAL_CREDITS = 200;
+
 router.post("/register-business", async (req, res) => {
   try {
     const {
@@ -84,6 +89,10 @@ router.post("/register-business", async (req, res) => {
     }
 
     // 3. Create client row
+    // New signups start on a flat trial credit balance, not the chosen
+    // plan's full monthly_credits — the plan they picked only becomes their
+    // real billing once they subscribe (see service/billing.js), which is
+    // triggered automatically when this trial balance runs out.
     const { data: client, error: clientError } = await supabase
       .from("clients")
       .insert({
@@ -91,8 +100,9 @@ router.post("/register-business", async (req, res) => {
         business_name: businessName,
         email: businessEmail,
         phone: businessPhone,
-        credits_remaining: selectedPlan.monthly_credits,
+        credits_remaining: TRIAL_CREDITS,
         status: "active",
+        subscription_status: "trial",
         ownerName: ownerName || oauthUser?.user_metadata?.full_name || oauthUser?.user_metadata?.name || "",
         ownerEmail: ownerEmail || oauthUser?.email,
         receptionist_mode: receptionistMode,

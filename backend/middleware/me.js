@@ -1167,6 +1167,8 @@ router.get("/me/billing/summary", requireAuth, async (req, res) => {
     const minutesTotal = Number(plan?.monthly_credits || 0);
     const minutesRemaining = Math.max(minutesTotal - minutesUsed, 0);
 
+    const subscriptionStatus = client.subscription_status || "trial";
+
     return res.json({
       success: true,
       balance: {
@@ -1185,7 +1187,14 @@ router.get("/me/billing/summary", requireAuth, async (req, res) => {
 
         autoTopUp: client.auto_topup ?? false,
         autoTopUpThreshold: Number(client.auto_topup_threshold || 100),
-        autoTopUpAmount: Number(client.auto_topup_amount || 50)
+        autoTopUpAmount: Number(client.auto_topup_amount || 50),
+
+        // Trial-then-subscribe model: new signups get a flat free trial
+        // balance (see router/register_business.js); once it's used up,
+        // needsSubscription tells the frontend to prompt them to pay for
+        // the plan they picked at signup instead of just "low balance."
+        subscriptionStatus,
+        needsSubscription: client.status === "paused" && subscriptionStatus === "trial"
       }
     });
   } catch (err) {
@@ -1331,14 +1340,28 @@ router.get("/me/alerts", requireAuth, async (req, res) => {
 
     const creditsRemaining = Number(client.credits_remaining || 0);
     const lowCreditThreshold = 100;
+    const subscriptionStatus = client.subscription_status || "trial";
+    const needsSubscription =
+      creditsRemaining <= lowCreditThreshold && subscriptionStatus === "trial";
+
+    const plan = needsSubscription ? await resolveClientPlan(client) : null;
 
     return res.json({
       success: true,
       alerts: {
-        lowCredit: creditsRemaining <= lowCreditThreshold,
+        // Trial ran out — this takes priority over the generic low-credit
+        // nudge below, since a trial client can't just "top up," they need
+        // to actually subscribe to the plan they picked at signup.
+        needsSubscription,
+        needsSubscriptionMessage: needsSubscription
+          ? `Your free trial credits are used up. Subscribe to the ${plan?.name || "plan"} plan ($${Number(plan?.price_usd || 0)}/mo) to keep your AI receptionist active.`
+          : null,
+        subscriptionPlanSlug: plan?.slug || null,
+
+        lowCredit: creditsRemaining <= lowCreditThreshold && !needsSubscription,
         creditsRemaining,
         lowCreditMessage:
-          creditsRemaining <= lowCreditThreshold
+          creditsRemaining <= lowCreditThreshold && !needsSubscription
             ? `Your credit is low. You have ${creditsRemaining} credits left. Please top up to avoid service interruption.`
             : null,
 
