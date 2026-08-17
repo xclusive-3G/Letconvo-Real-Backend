@@ -73,11 +73,11 @@ app.use("/api", billingRouter);
 
 // connect to retell and update booking status based on AI outcome
 
-const TELNYX_API_KEY = process.env.TELNYX_API_KEY || 'KEY019D96AA130965E681EE3D54B4204475_BOTw56WQSNjMIZnKxW1EVJ';
+const TELNYX_API_KEY = process.env.TELNYX_API_KEY;
 const TELNYX_APP_ID  = process.env.TELNYX_APP_ID;
-const RETELL_API_KEY = process.env.RETELL_API_KEY || 'key_ae76e0e16a642a77738d4dd28f81';
-const AGENT_ID       = process.env.RETELL_AGENT_ID || "agent_bb88bde584ea5625998cb4a8e9";
-const FROM_NUMBER    = process.env.FROM_NUMBER || "+12014621533";
+const RETELL_API_KEY = process.env.RETELL_API_KEY;
+const AGENT_ID       = process.env.RETELL_AGENT_ID;
+const FROM_NUMBER    = process.env.FROM_NUMBER;
 
 // Retell SIP URI — agent_id@sip.retellai.com
 const RETELL_SIP_URI = `sip:${AGENT_ID}@sip.retellai.com`;
@@ -92,7 +92,6 @@ async function transferToRetell(callControlId) {
   console.log("📞 Call Control ID:", callControlId);
   // console.log("🔗 SIP URI:", RETELL_SIP_URI);
   console.log("🔑 Telnyx Key:", TELNYX_API_KEY ? "✅ loaded" : "❌ MISSING");
-const TELNYX_API_KEY = process.env.TELNYX_API_KEY || 'KEY019D96AA130965E681EE3D54B4204475_BOTw56WQSNjMIZnKxW1EVJ';
 
   await fetch(
     `https://api.telnyx.com/v2/calls/${callControlId}/actions/speak`,

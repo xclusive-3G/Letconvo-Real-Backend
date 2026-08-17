@@ -5,8 +5,9 @@ const router = express.Router();
 
 // Free trial balance every new signup starts with, regardless of the plan
 // they picked — separate from that plan's monthly_credits, which only
-// applies once they actually subscribe.
-const TRIAL_CREDITS = 200;
+// applies once they actually subscribe. Matches the "500 credits free
+// trial" promise shown on the signup page (GetStartedPage.jsx).
+const TRIAL_CREDITS = 500;
 
 router.post("/register-business", async (req, res) => {
   try {
@@ -174,6 +175,7 @@ router.post("/register-business", async (req, res) => {
     // 6. Get a fresh session — the OAuth user already has one (reuse its
     // token), otherwise sign in the freshly-created email/password user.
     let accessToken = bearerToken;
+    let refreshToken;
 
     if (!oauthUser) {
       const { data: loginData, error: loginError } =
@@ -184,13 +186,15 @@ router.post("/register-business", async (req, res) => {
 
       if (loginError) throw loginError;
       accessToken = loginData.session.access_token;
+      refreshToken = loginData.session.refresh_token;
     }
 
     return res.json({
       success: true,
       clientId: client.id,
       user,
-      access_token: accessToken
+      access_token: accessToken,
+      refresh_token: refreshToken
     });
   } catch (error) {
     console.error("❌ FULL ERROR:", error);

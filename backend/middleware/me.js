@@ -1203,6 +1203,46 @@ router.get("/me/billing/summary", requireAuth, async (req, res) => {
   }
 });
 
+router.put("/me/billing/auto-topup", requireAuth, async (req, res) => {
+  try {
+    const client = await getClientByUserId(req.user.id, "id");
+
+    const { enabled, threshold, amount } = req.body;
+
+    const thresholdNum = Number(threshold);
+    const amountNum = Number(amount);
+
+    if (!Number.isFinite(thresholdNum) || thresholdNum < 0) {
+      return res.status(400).json({ error: "threshold must be a non-negative number" });
+    }
+
+    if (!Number.isFinite(amountNum) || amountNum <= 0) {
+      return res.status(400).json({ error: "amount must be a positive number" });
+    }
+
+    const { error } = await supabase
+      .from("clients")
+      .update({
+        auto_topup: !!enabled,
+        auto_topup_threshold: thresholdNum,
+        auto_topup_amount: amountNum
+      })
+      .eq("id", client.id);
+
+    if (error) throw error;
+
+    return res.json({
+      success: true,
+      autoTopUp: !!enabled,
+      autoTopUpThreshold: thresholdNum,
+      autoTopUpAmount: amountNum
+    });
+  } catch (err) {
+    console.error("❌ Update auto top-up error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.get("/me/payment-methods", requireAuth, async (req, res) => {
   try {
     const client = await getClientByUserId(req.user.id, "id");
