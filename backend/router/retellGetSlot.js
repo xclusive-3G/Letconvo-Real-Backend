@@ -85,4 +85,38 @@ router.post("/retell/get-slots", async (req, res) => {
   }
 });
 
+const formatHour = (h) => {
+  const period = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:00 ${period}`;
+};
+
+// Called by the Retell agent mid-call when a caller asks about business
+// hours. Live inbound calls are transferred to Retell over a raw SIP
+// trunk (see service/telnyx.js's transferCallToRetellSip) with no channel
+// to inject per-client dynamic variables at call start, so this works the
+// same way /retell/get-slots does — the agent calls it on demand instead
+// of relying on hours being baked into the call setup.
+router.post("/retell/get-business-hours", async (req, res) => {
+  try {
+    const clientId = req.body.clientId || req.query.clientId;
+
+    if (!clientId) {
+      return res.status(400).json({ error: "clientId is required" });
+    }
+
+    const { openHour, closeHour } = await getBusinessHours(clientId);
+
+    return res.json({
+      openHour,
+      closeHour,
+      // Matches get-slots' own Sunday-closed assumption above.
+      hoursText: `We're open from ${formatHour(openHour)} to ${formatHour(closeHour)}, Monday through Saturday. We're closed on Sundays.`
+    });
+  } catch (err) {
+    console.error("❌ get-business-hours error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
