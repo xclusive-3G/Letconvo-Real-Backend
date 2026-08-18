@@ -1,5 +1,5 @@
 import { supabase } from "../config/supabase.js";
-import { sendEmail } from "./email.js";
+import { sendEmail, renderNotificationEmail, renderNotificationText } from "./email.js";
 
 // email: opt-in per call site — only billing/credit alerts (low credit,
 // trial ended, subscription active/renewed, top-up successful) actually
@@ -55,7 +55,7 @@ async function emailIfEnabled({ clientId, title, message }) {
   try {
     const { data: client, error: clientError } = await supabase
       .from("clients")
-      .select("ownerEmail")
+      .select("ownerEmail, ownerName, business_name")
       .eq("id", clientId)
       .maybeSingle();
 
@@ -71,7 +71,19 @@ async function emailIfEnabled({ clientId, title, message }) {
     // email is on by default until a settings row exists to say otherwise.
     if (settings && settings.email_notif === false) return;
 
-    await sendEmail({ to: client.ownerEmail, subject: title, text: message });
+    const emailArgs = {
+      businessName: client.business_name,
+      greetingName: client.ownerName,
+      title,
+      message
+    };
+
+    await sendEmail({
+      to: client.ownerEmail,
+      subject: title,
+      text: renderNotificationText(emailArgs),
+      html: renderNotificationEmail(emailArgs)
+    });
   } catch (err) {
     console.error("❌ Failed to email notification:", err);
   }
