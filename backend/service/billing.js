@@ -160,7 +160,8 @@ export async function processPaystackTransaction(data) {
       clientId,
       title: "Top-up successful",
       message: `$${amount.toFixed(2)} added to your balance.`,
-      type: "alert"
+      type: "alert",
+      email: true
     });
 
     return { handled: true };
@@ -210,7 +211,8 @@ export async function processPaystackTransaction(data) {
     clientId,
     title: "Subscription active",
     message: `You're now subscribed to the ${plan?.name || planSlug} plan.`,
-    type: "alert"
+    type: "alert",
+    email: true
   });
 
   return { handled: true };
@@ -292,7 +294,8 @@ export async function handleRenewalCharge(data) {
     clientId: client.id,
     title: "Subscription renewed",
     message: `Your ${plan?.name || "plan"} renewed — credits refreshed.`,
-    type: "alert"
+    type: "alert",
+    email: true
   });
 }
 

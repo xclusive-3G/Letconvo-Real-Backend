@@ -183,7 +183,8 @@ export async function pauseClientIfLowCredits(clientId, minimumCredits = 100) {
       clientId: data.id,
       title: "Low credit balance",
       message: `Your account has been paused — only ${data.credits_remaining} credits remaining. Please top up to resume service.`,
-      type: "alert"
+      type: "alert",
+      email: true
     });
 
     return data;
