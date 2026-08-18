@@ -1,6 +1,6 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
-import { normalizePhone, ACTIVE_STATUSES } from "../utils/bookings.js";
+import { normalizePhone, ACTIVE_STATUSES, scheduleAppointmentReminder } from "../utils/bookings.js";
 import { createNotification } from "../utils/createNotification.js";
 
 const router = express.Router();
@@ -74,6 +74,8 @@ router.post("/api/bookings", async (req, res) => {
       message: `${customerName} · ${date} at ${time}`,
       type: "appointment"
     });
+
+    await scheduleAppointmentReminder(data);
 
     return res.status(201).json(data);
 

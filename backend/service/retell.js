@@ -1,5 +1,6 @@
 import axios from "axios";
-import { getBusinessHours } from "../utils/bookings.js";
+import { supabase } from "../config/supabase.js";
+import { getBusinessHours, formatDateHuman, formatTimeHuman } from "../utils/bookings.js";
 
 const formatHour = (h) => {
   const period = h >= 12 ? "PM" : "AM";
@@ -45,6 +46,53 @@ export async function createRetellCallback({
   return response.data;
 }
 
+
+// Placed ~20 minutes before a booking's scheduled time (see
+// utils/bookings.js's scheduleAppointmentReminder / the "appointment-
+// reminders" queue processed in worker.js). Same no-explicit-agent_id
+// pattern as createRetellCallback — relies on RETELL_FROM_NUMBER's bound
+// agent, not a per-client one.
+//
+// For the agent to actually act on "customer says they're not coming",
+// its Retell dashboard prompt needs a tool call to POST
+// /retell/update-booking with { clientId, phone, status: "cancelled" }
+// (router/retellUpdateBooking.js) — that part is prompt configuration on
+// the business's Retell agent, not something this function can do itself.
+export async function createRetellReminderCall({ toNumber, clientId, booking }) {
+  const { data: client } = await supabase
+    .from("clients")
+    .select("business_name")
+    .eq("id", clientId)
+    .maybeSingle();
+
+  const response = await axios.post(
+    "https://api.retellai.com/v2/create-phone-call",
+    {
+      from_number: process.env.RETELL_FROM_NUMBER,
+      to_number: toNumber,
+      metadata: {
+        clientId,
+        bookingId: booking.id,
+        source: "appointment_reminder"
+      },
+      retell_llm_dynamic_variables: {
+        business_name: client?.business_name || "the business",
+        customer_name: booking.customer_name || "there",
+        appointment_date: formatDateHuman(booking.appointment_date),
+        appointment_time: formatTimeHuman(booking.appointment_time),
+        service: booking.service || "your appointment"
+      }
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.RETELL_API_KEY}`,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+
+  return response.data;
+}
 
 export async function createRetellLiveCall({
   toNumber,

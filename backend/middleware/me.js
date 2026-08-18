@@ -2,6 +2,11 @@ import express from "express";
 import { supabase } from "../config/supabase.js";
 import { requireAuth } from "../middleware/auth.js";
 import { reconcileClientCalls } from "../service/retellReconciliation.js";
+import {
+  ACTIVE_STATUSES,
+  scheduleAppointmentReminder,
+  cancelAppointmentReminder
+} from "../utils/bookings.js";
 // import {
 //   getLiveCalls
 // } from "../service/liveCalls.js";
@@ -403,6 +408,14 @@ router.patch("/me/appointments/:id", requireAuth, async (req, res) => {
 
     if (error) throw error;
     if (!data) return res.status(404).json({ error: "Appointment not found" });
+
+    // Keep the reminder call in sync with staff-initiated changes too,
+    // same as the Retell-agent-driven /retell/update-booking path.
+    if (ACTIVE_STATUSES.includes(data.status) && (appointment_date !== undefined || appointment_time !== undefined)) {
+      await scheduleAppointmentReminder(data);
+    } else if (!ACTIVE_STATUSES.includes(data.status)) {
+      await cancelAppointmentReminder(data.id);
+    }
 
     return res.json({ success: true, appointment: data });
   } catch (err) {
@@ -1014,6 +1027,7 @@ router.get("/me/settings", requireAuth, async (req, res) => {
         emailNotif: settings?.email_notif ?? true,
         smsNotif: settings?.sms_notif ?? true,
         missedAlerts: settings?.missed_alerts ?? true,
+        appointmentReminders: settings?.appointment_reminders ?? true,
         reportFreq: settings?.report_freq || "daily",
         reportEmail: settings?.report_email || client.email || "",
         subscription: {
@@ -1050,6 +1064,7 @@ router.put("/me/settings", requireAuth, async (req, res) => {
       emailNotif,
       smsNotif,
       missedAlerts,
+      appointmentReminders,
       reportFreq,
       reportEmail
     } = req.body;
@@ -1088,6 +1103,7 @@ router.put("/me/settings", requireAuth, async (req, res) => {
       email_notif: emailNotif,
       sms_notif: smsNotif,
       missed_alerts: missedAlerts,
+      appointment_reminders: appointmentReminders,
       report_freq: reportFreq,
       report_email: reportEmail
     };

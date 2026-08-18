@@ -1,4 +1,8 @@
 import { supabase } from "../config/supabase.js";
+import { reminderQueue } from "../queue/reminderQueue.js";
+
+// Minutes before the appointment the reminder call should go out.
+export const REMINDER_LEAD_MINUTES = 20;
 
 // Statuses used consistently across every booking endpoint.
 export const BOOKING_STATUSES = [
@@ -87,4 +91,76 @@ export async function findLatestBooking(clientId, phone) {
 
   if (error) throw error;
   return data;
+}
+
+export async function isAppointmentReminderEnabled(clientId) {
+  const { data, error } = await supabase
+    .from("client_settings")
+    .select("appointment_reminders")
+    .eq("client_id", clientId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("❌ Failed to load appointment_reminders, defaulting to enabled:", error.message);
+    return true;
+  }
+
+  return data?.appointment_reminders ?? true;
+}
+
+const reminderJobId = (bookingId) => `reminder-${bookingId}`;
+
+// Queues (or re-queues) a delayed job that calls the customer
+// REMINDER_LEAD_MINUTES before their appointment. Uses a stable jobId
+// per booking so a reschedule can cleanly replace the old delay instead
+// of leaving a stale job pointing at the wrong time — always remove
+// first, since BullMQ ignores new options (including delay) when a job
+// with that ID is already waiting/delayed.
+// Best-effort — never throws. Reminder scheduling is a side effect of
+// creating/updating a booking; a Redis hiccup here should never break
+// the booking request itself.
+export async function scheduleAppointmentReminder(booking) {
+  try {
+    await cancelAppointmentReminder(booking.id);
+
+    const enabled = await isAppointmentReminderEnabled(booking.client_id);
+    if (!enabled) return null;
+
+    const apptDateTime = new Date(`${booking.appointment_date}T${toHHMM(booking.appointment_time)}:00`);
+    if (Number.isNaN(apptDateTime.getTime())) return null;
+
+    const reminderAt = apptDateTime.getTime() - REMINDER_LEAD_MINUTES * 60 * 1000;
+    const delay = reminderAt - Date.now();
+
+    // Too close (or already past) to meaningfully remind — e.g. the
+    // booking was made within the lead window of its own slot.
+    if (delay <= 0) return null;
+
+    return await reminderQueue.add(
+      "appointment-reminder",
+      { bookingId: booking.id },
+      {
+        delay,
+        attempts: 2,
+        backoff: { type: "exponential", delay: 30_000 },
+        removeOnComplete: 100,
+        removeOnFail: 100,
+        jobId: reminderJobId(booking.id)
+      }
+    );
+  } catch (err) {
+    console.error("❌ Failed to schedule appointment reminder:", err.message);
+    return null;
+  }
+}
+
+// Called when a booking is cancelled/completed, or before re-scheduling
+// it, so a stale reminder never fires for a slot that no longer applies.
+export async function cancelAppointmentReminder(bookingId) {
+  try {
+    const job = await reminderQueue.getJob(reminderJobId(bookingId));
+    if (job) await job.remove();
+  } catch (err) {
+    console.error("❌ Failed to cancel appointment reminder job:", err.message);
+  }
 }

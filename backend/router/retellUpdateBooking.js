@@ -2,7 +2,10 @@ import express from "express";
 import { supabase } from "../config/supabase.js";
 import {
   findLatestBooking,
-  BOOKING_STATUSES
+  BOOKING_STATUSES,
+  ACTIVE_STATUSES,
+  scheduleAppointmentReminder,
+  cancelAppointmentReminder
 } from "../utils/bookings.js";
 
 const router = express.Router();
@@ -49,6 +52,16 @@ router.post("/retell/update-booking", async (req, res) => {
       .single();
 
     if (error) throw error;
+
+    // Keep the reminder call in sync with whatever the booking now looks
+    // like: still active and the time actually changed -> re-schedule at
+    // the new time; no longer active -> cancel the pending reminder so it
+    // doesn't fire for a slot that's cancelled/completed.
+    if (ACTIVE_STATUSES.includes(data.status) && (newDate || newTime)) {
+      await scheduleAppointmentReminder(data);
+    } else if (!ACTIVE_STATUSES.includes(data.status)) {
+      await cancelAppointmentReminder(data.id);
+    }
 
     return res.json({ success: true, booking: data });
 
