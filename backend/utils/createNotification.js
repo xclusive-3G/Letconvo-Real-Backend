@@ -11,7 +11,13 @@ export async function createNotification({
   title,
   message,
   type = "info",
-  email = false
+  email = false,
+  // Optional richer content for the email specifically, when the terse
+  // in-app title/message isn't enough (e.g. low-credit's multi-paragraph
+  // copy + a highlighted balance figure). Shape: { subject, title,
+  // paragraphs, highlight: { label, value }, preCta, ctaLabel }. Anything
+  // omitted falls back to title/message.
+  emailOverride = null
 }) {
   const { error } = await supabase
     .from("notifications")
@@ -27,7 +33,7 @@ export async function createNotification({
   }
 
   if (email) {
-    await emailIfEnabled({ clientId, title, message });
+    await emailIfEnabled({ clientId, title, message, emailOverride });
   }
 }
 
@@ -51,7 +57,7 @@ export async function isSmsNotifEnabled(clientId) {
   return data?.sms_notif ?? true;
 }
 
-async function emailIfEnabled({ clientId, title, message }) {
+async function emailIfEnabled({ clientId, title, message, emailOverride }) {
   try {
     const { data: client, error: clientError } = await supabase
       .from("clients")
@@ -74,13 +80,17 @@ async function emailIfEnabled({ clientId, title, message }) {
     const emailArgs = {
       businessName: client.business_name,
       greetingName: client.ownerName,
-      title,
-      message
+      title: emailOverride?.title || title,
+      message,
+      paragraphs: emailOverride?.paragraphs,
+      highlight: emailOverride?.highlight,
+      preCta: emailOverride?.preCta,
+      ...(emailOverride?.ctaLabel ? { ctaLabel: emailOverride.ctaLabel } : {})
     };
 
     await sendEmail({
       to: client.ownerEmail,
-      subject: title,
+      subject: emailOverride?.subject || title,
       text: renderNotificationText(emailArgs),
       html: renderNotificationEmail(emailArgs)
     });

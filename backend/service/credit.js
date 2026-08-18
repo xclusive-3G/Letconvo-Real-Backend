@@ -184,7 +184,21 @@ export async function pauseClientIfLowCredits(clientId, minimumCredits = 100) {
       title: "Low credit balance",
       message: `Your account has been paused — only ${data.credits_remaining} credits remaining. Please top up to resume service.`,
       type: "alert",
-      email: true
+      email: true,
+      emailOverride: {
+        // Subject line intentionally has no emoji/exclamation stacking —
+        // keeps it out of common spam-filter heuristics. The heading
+        // inside the opened email is where the ⚠️ actually shows.
+        subject: "Low Credit Balance",
+        title: "⚠️ Low Credit Balance",
+        paragraphs: [
+          "Your LetConvo credit balance is running low and may affect your AI receptionist, calls, messages, and automations.",
+          "To avoid service interruptions, please recharge your account as soon as possible."
+        ],
+        highlight: { label: "Current Balance", value: `${data.credits_remaining} credits` },
+        preCta: "👉 Recharge now to keep your AI assistant running smoothly.",
+        ctaLabel: "Recharge Now"
+      }
     });
 
     return data;
