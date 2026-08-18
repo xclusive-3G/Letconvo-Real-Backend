@@ -31,6 +31,26 @@ export async function createNotification({
   }
 }
 
+// Used by service/recovery.js to gate the missed-call SMS on the SMS
+// Notifications toggle — defaults to enabled (true) both when there's no
+// settings row yet and when the lookup itself fails, matching GET
+// /me/settings' own default and erring on the side of not silently
+// dropping a missed-call alert.
+export async function isSmsNotifEnabled(clientId) {
+  const { data, error } = await supabase
+    .from("client_settings")
+    .select("sms_notif")
+    .eq("client_id", clientId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("❌ Failed to load sms_notif, defaulting to enabled:", error.message);
+    return true;
+  }
+
+  return data?.sms_notif ?? true;
+}
+
 async function emailIfEnabled({ clientId, title, message }) {
   try {
     const { data: client, error: clientError } = await supabase

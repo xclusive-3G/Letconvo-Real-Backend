@@ -10,6 +10,7 @@ import { callbackQueue } from "../queue/callBackQueue.js";
 import { createRetellCallback } from "./retell.js";
 import { sendMissedCallSms } from "./telnyx.js";
 import { deductCreditsAtomic, pauseClientIfLowCredits } from "./credit.js";
+import { isSmsNotifEnabled } from "../utils/createNotification.js";
 
 // const MIN_CALL_CREDITS = 5;
 
@@ -36,12 +37,16 @@ export async function triggerMissedCallRecovery(input) {
   }
 
   try {
-    await sendMissedCallSms(recovery.callerPhone);
+    if (await isSmsNotifEnabled(recovery.clientId)) {
+      await sendMissedCallSms(recovery.callerPhone);
 
-    await updateRecovery(recovery.id, {
-      smsSent: true,
-      status: "sms_sent"
-    });
+      await updateRecovery(recovery.id, {
+        smsSent: true,
+        status: "sms_sent"
+      });
+    } else {
+      console.log("🔕 SMS Notifications disabled for this client — skipping missed-call SMS");
+    }
   } catch (err) {
     await updateRecovery(recovery.id, {
       smsSent: false,
