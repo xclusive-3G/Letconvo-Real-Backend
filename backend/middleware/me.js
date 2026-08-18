@@ -267,19 +267,35 @@ router.get("/me/dashboard-stats", requireAuth, async (req, res) => {
 
     if (bookingsError) throw bookingsError;
 
-    const weeklyData = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
-      (day) => ({ day, calls: 0 })
-    );
+    const { data: allBookings = [], error: allBookingsError } = await supabase
+      .from("bookings")
+      .select("created_at")
+      .eq("client_id", client.id);
+
+    if (allBookingsError) throw allBookingsError;
+
+    const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const weeklyData = WEEKDAYS.map((day) => ({ day, calls: 0, booked: 0, missed: 0 }));
+    const missedCallIds = new Set(missedCalls.map((call) => call.id));
 
     calls.forEach((call) => {
       if (!call.created_at) return;
 
-      const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][
-        new Date(call.created_at).getDay()
-      ];
+      const day = WEEKDAYS[new Date(call.created_at).getDay()];
 
       const row = weeklyData.find((x) => x.day === day);
-      if (row) row.calls += 1;
+      if (!row) return;
+
+      row.calls += 1;
+      if (missedCallIds.has(call.id)) row.missed += 1;
+    });
+
+    allBookings.forEach((booking) => {
+      if (!booking.created_at) return;
+
+      const day = WEEKDAYS[new Date(booking.created_at).getDay()];
+      const row = weeklyData.find((x) => x.day === day);
+      if (row) row.booked += 1;
     });
 
     return res.json({
