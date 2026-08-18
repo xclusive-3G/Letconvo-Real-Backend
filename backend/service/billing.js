@@ -1,49 +1,30 @@
 import { supabase } from "../config/supabase.js";
-import { getStripe } from "../config/stripe.js";
+import { getPaystack } from "../config/paystack.js";
 import { createBillingTransaction } from "./billingTransaction.js";
 import { createNotification } from "../utils/createNotification.js";
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://letconvo.live";
 
-async function getOrCreateStripeCustomer(client) {
-  const stripe = getStripe();
-
-  if (client.stripe_customer_id) return client.stripe_customer_id;
-
-  const customer = await stripe.customers.create({
-    email: client.email || client.ownerEmail || undefined,
-    name: client.business_name || undefined,
-    metadata: { clientId: client.id }
-  });
-
-  await supabase
-    .from("clients")
-    .update({ stripe_customer_id: customer.id })
-    .eq("id", client.id);
-
-  return customer.id;
-}
-
 // mode: "subscription" (pay for the plan picked at signup / upgrade) or
-// "topup" (one-time balance top-up). Returns the hosted Stripe Checkout URL
-// to redirect the browser to — we never touch raw card data ourselves.
+// "topup" (one-time balance top-up). Returns the hosted Paystack checkout
+// URL to redirect the browser to — we never touch raw card data ourselves.
 export async function createCheckoutSession({ client, mode, planSlug, amount }) {
-  const stripe = getStripe();
+  const paystack = getPaystack();
 
-  if (!stripe) {
+  if (!paystack) {
     const err = new Error("Billing is not configured yet. Please contact support.");
     err.code = "BILLING_NOT_CONFIGURED";
     throw err;
   }
 
-  const customerId = await getOrCreateStripeCustomer(client);
-  // The frontend's router matches window.location.hash exactly against a
-  // fixed page set (see App.jsx's getInitialPage), so "checkout=..." can't
-  // live in the hash or it'd fail to match "dashboard" and bounce to the
-  // marketing site. Putting it in the query string instead leaves the hash
-  // untouched while still being readable by the dashboard after redirect.
-  const successUrl = `${FRONTEND_URL}/?checkout=success#dashboard`;
-  const cancelUrl = `${FRONTEND_URL}/?checkout=cancel#dashboard`;
+  // Paystack has a single callback_url (no separate success/cancel URLs
+  // like Stripe) and appends its own reference/trxref query params onto
+  // it, so our own "checkout=verify" marker survives the round trip. The
+  // frontend reads that and calls GET /billing/verify with the reference
+  // instead of trusting a pre-set success/cancel flag — Paystack doesn't
+  // tell us the outcome until we ask.
+  const callbackUrl = `${FRONTEND_URL}/?checkout=verify#dashboard`;
+  const email = client.email || client.ownerEmail;
 
   if (mode === "subscription") {
     const { data: plan, error } = await supabase
@@ -61,23 +42,25 @@ export async function createCheckoutSession({ client, mode, planSlug, amount }) 
       throw err;
     }
 
-    if (!plan.stripe_price_id) {
+    if (!plan.paystack_plan_code) {
       const err = new Error(`The ${plan.name} plan isn't available for checkout yet.`);
       err.code = "PLAN_NOT_CHECKOUT_READY";
       throw err;
     }
 
-    const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      customer: customerId,
-      line_items: [{ price: plan.stripe_price_id, quantity: 1 }],
-      success_url: successUrl,
-      cancel_url: cancelUrl,
-      metadata: { clientId: client.id, planSlug: plan.slug },
-      subscription_data: { metadata: { clientId: client.id, planSlug: plan.slug } }
+    const reference = `sub_${client.id}_${Date.now()}`;
+
+    const { data } = await paystack.post("/transaction/initialize", {
+      email,
+      amount: Math.round(Number(plan.price_usd) * 100),
+      currency: "USD",
+      plan: plan.paystack_plan_code,
+      reference,
+      callback_url: callbackUrl,
+      metadata: { clientId: client.id, planSlug: plan.slug }
     });
 
-    return session.url;
+    return data.data.authorization_url;
   }
 
   if (mode === "topup") {
@@ -89,25 +72,18 @@ export async function createCheckoutSession({ client, mode, planSlug, amount }) 
       throw err;
     }
 
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      customer: customerId,
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            product_data: { name: "LetConvo AI balance top-up" },
-            unit_amount: Math.round(amt * 100)
-          },
-          quantity: 1
-        }
-      ],
-      success_url: successUrl,
-      cancel_url: cancelUrl,
+    const reference = `topup_${client.id}_${Date.now()}`;
+
+    const { data } = await paystack.post("/transaction/initialize", {
+      email,
+      amount: Math.round(amt * 100),
+      currency: "USD",
+      reference,
+      callback_url: callbackUrl,
       metadata: { clientId: client.id, type: "topup", amount: String(amt) }
     });
 
-    return session.url;
+    return data.data.authorization_url;
   }
 
   const err = new Error(`Unsupported checkout mode: ${mode}`);
@@ -115,111 +91,167 @@ export async function createCheckoutSession({ client, mode, planSlug, amount }) 
   throw err;
 }
 
-export async function handleCheckoutSessionCompleted(session) {
-  const clientId = session.metadata?.clientId;
-  if (!clientId) return;
+// Shared, idempotent processor for a successful Paystack charge that we
+// initiated (subscribe or top-up click) — called both from the
+// charge.success webhook and from the /billing/verify fallback the
+// frontend hits on redirect back, since webhook delivery isn't guaranteed
+// to beat the browser back to the dashboard. Dedup key is the Paystack
+// transaction reference, stored as billing_transactions.reference. A
+// renewal charge (no clientId in metadata, since Paystack triggers those
+// itself) is left for handleRenewalCharge below.
+export async function processPaystackTransaction(data) {
+  const reference = data?.reference;
+  if (!reference || data.status !== "success") return { handled: false };
 
-  if (session.mode === "subscription") {
-    const planSlug = session.metadata?.planSlug;
+  const clientId = data.metadata?.clientId;
+  if (!clientId) return { handled: false };
 
-    const { data: plan, error: planError } = await supabase
-      .from("plans")
-      .select("*")
-      .eq("slug", planSlug)
-      .maybeSingle();
+  const { data: existing, error: existingError } = await supabase
+    .from("billing_transactions")
+    .select("id")
+    .eq("reference", reference)
+    .maybeSingle();
 
-    if (planError) throw planError;
+  if (existingError) throw existingError;
+  if (existing) return { handled: true, alreadyProcessed: true };
 
-    const newBalance = Number(plan?.monthly_credits || 0);
+  const customerCode = data.customer?.customer_code;
 
-    const { error } = await supabase
+  if (data.metadata?.type === "topup") {
+    const amount = Number(data.metadata.amount || data.amount / 100);
+
+    const { data: clientRow, error: fetchError } = await supabase
+      .from("clients")
+      .select("credits_remaining")
+      .eq("id", clientId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    const newBalance = Number(clientRow.credits_remaining || 0) + amount;
+
+    const { error: updateError } = await supabase
       .from("clients")
       .update({
-        subscription_status: "active",
+        credits_remaining: newBalance,
         status: "active",
-        stripe_customer_id: session.customer,
-        stripe_subscription_id: session.subscription,
-        plan_id: plan?.id,
-        plan_slug: plan?.slug,
-        credits_remaining: newBalance
+        ...(customerCode ? { paystack_customer_code: customerCode } : {})
       })
       .eq("id", clientId);
 
-    if (error) throw error;
+    if (updateError) throw updateError;
 
     await createBillingTransaction({
       clientId,
-      type: "payment",
-      description: `Subscribed to ${plan?.name || planSlug} plan`,
-      amount: Number(plan?.price_usd || 0),
+      type: "topup",
+      description: "Balance top-up",
+      amount,
       balanceAfter: newBalance,
-      minutes: newBalance,
-      reference: session.id
+      reference
     });
 
     await createNotification({
       clientId,
-      title: "Subscription active",
-      message: `You're now subscribed to the ${plan?.name || planSlug} plan.`,
+      title: "Top-up successful",
+      message: `$${amount.toFixed(2)} added to your balance.`,
       type: "alert"
     });
 
-    return;
+    return { handled: true };
   }
 
-  // One-time top-up.
-  const amount = Number(session.metadata?.amount || (session.amount_total || 0) / 100);
+  // Subscription first-charge. The subscription_code itself isn't reliably
+  // present on this event, so it's filled in separately by
+  // handleSubscriptionCreate once Paystack's subscription.create webhook
+  // lands (matched via paystack_customer_code set here).
+  const planSlug = data.metadata?.planSlug;
 
-  const { data: client, error: fetchError } = await supabase
-    .from("clients")
-    .select("credits_remaining")
-    .eq("id", clientId)
-    .single();
+  const { data: plan, error: planError } = await supabase
+    .from("plans")
+    .select("*")
+    .eq("slug", planSlug)
+    .maybeSingle();
 
-  if (fetchError) throw fetchError;
+  if (planError) throw planError;
 
-  const newBalance = Number(client.credits_remaining || 0) + amount;
+  const newBalance = Number(plan?.monthly_credits || 0);
 
-  const { error: updateError } = await supabase
+  const { error } = await supabase
     .from("clients")
     .update({
-      credits_remaining: newBalance,
+      subscription_status: "active",
       status: "active",
-      stripe_customer_id: session.customer
+      paystack_customer_code: customerCode || null,
+      plan_id: plan?.id,
+      plan_slug: plan?.slug,
+      credits_remaining: newBalance
     })
     .eq("id", clientId);
 
-  if (updateError) throw updateError;
+  if (error) throw error;
 
   await createBillingTransaction({
     clientId,
-    type: "topup",
-    description: "Balance top-up",
-    amount,
+    type: "payment",
+    description: `Subscribed to ${plan?.name || planSlug} plan`,
+    amount: Number(plan?.price_usd || 0),
     balanceAfter: newBalance,
-    reference: session.id
+    minutes: newBalance,
+    reference
   });
 
   await createNotification({
     clientId,
-    title: "Top-up successful",
-    message: `$${amount.toFixed(2)} added to your balance.`,
+    title: "Subscription active",
+    message: `You're now subscribed to the ${plan?.name || planSlug} plan.`,
     type: "alert"
   });
+
+  return { handled: true };
 }
 
-export async function handleInvoicePaid(invoice) {
-  // The first invoice of a subscription is already handled by
-  // checkout.session.completed — only monthly renewals should land here.
-  if (invoice.billing_reason !== "subscription_cycle") return;
+// Fills in paystack_subscription_code once Paystack creates the
+// subscription behind a plan-based charge (fired shortly after the first
+// successful charge.success for that transaction).
+export async function handleSubscriptionCreate(data) {
+  const subscriptionCode = data?.subscription_code;
+  const customerCode = data?.customer?.customer_code;
+  if (!subscriptionCode || !customerCode) return;
 
-  const subscriptionId = invoice.subscription;
-  if (!subscriptionId) return;
+  const { error } = await supabase
+    .from("clients")
+    .update({ paystack_subscription_code: subscriptionCode })
+    .eq("paystack_customer_code", customerCode);
+
+  if (error) throw error;
+}
+
+// Recurring renewal charges: Paystack auto-charges the customer's saved
+// authorization on each billing cycle. These are system-initiated, not
+// triggered through our /transaction/initialize call, so they carry no
+// metadata — resolve the client via paystack_customer_code instead.
+export async function handleRenewalCharge(data) {
+  if (!data || data.status !== "success" || data.metadata?.clientId) return;
+
+  const customerCode = data.customer?.customer_code;
+  if (!customerCode) return;
+
+  const reference = data.reference;
+  if (!reference) return;
+
+  const { data: existing, error: existingError } = await supabase
+    .from("billing_transactions")
+    .select("id")
+    .eq("reference", reference)
+    .maybeSingle();
+
+  if (existingError) throw existingError;
+  if (existing) return;
 
   const { data: client, error } = await supabase
     .from("clients")
     .select("id, plan_id")
-    .eq("stripe_subscription_id", subscriptionId)
+    .eq("paystack_customer_code", customerCode)
     .maybeSingle();
 
   if (error) throw error;
@@ -247,7 +279,7 @@ export async function handleInvoicePaid(invoice) {
     amount: Number(plan?.price_usd || 0),
     balanceAfter: newBalance,
     minutes: newBalance,
-    reference: invoice.id
+    reference
   });
 
   await createNotification({
@@ -258,11 +290,14 @@ export async function handleInvoicePaid(invoice) {
   });
 }
 
-export async function handleSubscriptionDeleted(subscription) {
+export async function handleSubscriptionDisable(data) {
+  const subscriptionCode = data?.subscription_code;
+  if (!subscriptionCode) return;
+
   const { error } = await supabase
     .from("clients")
     .update({ subscription_status: "canceled" })
-    .eq("stripe_subscription_id", subscription.id);
+    .eq("paystack_subscription_code", subscriptionCode);
 
   if (error) throw error;
 }

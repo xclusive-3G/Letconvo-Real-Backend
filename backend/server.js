@@ -18,7 +18,7 @@ import meRoutes from "./middleware/me.js";
 import bookingRouter from "./router/booking.js";
 import googleAuthBooking from "./router/googleAuth.js";
 import billingRouter from "./router/billing.js";
-import stripeWebhookRouter from "./router/stripeWebhook.js";
+import paystackWebhookRouter from "./router/paystackWebhook.js";
 
 
 import callHistory from "./router/callHistory.js";
@@ -36,12 +36,13 @@ cors({
     credentials: true
 });
 
-// Stripe needs the raw, unparsed request body to verify webhook signatures.
-// Scoped to this exact path (not "/") so express.json() below still works
-// normally for every other route — raw() would otherwise consume the
-// request stream for all of them too, since streams can only be read once.
-app.use("/webhooks/stripe", express.raw({ type: "application/json" }));
-app.use("/", stripeWebhookRouter);
+// Paystack needs the raw, unparsed request body to verify webhook
+// signatures. Scoped to this exact path (not "/") so express.json() below
+// still works normally for every other route — raw() would otherwise
+// consume the request stream for all of them too, since streams can only
+// be read once.
+app.use("/webhooks/paystack", express.raw({ type: "application/json" }));
+app.use("/", paystackWebhookRouter);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
