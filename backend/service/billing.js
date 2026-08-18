@@ -42,7 +42,7 @@ export async function createCheckoutSession({ client, mode, planSlug, amount }) 
       throw err;
     }
 
-    if (!plan.paystack_plan_code || !plan.price_ngn) {
+    if (!plan.paystack_plan_code) {
       const err = new Error(`The ${plan.name} plan isn't available for checkout yet.`);
       err.code = "PLAN_NOT_CHECKOUT_READY";
       throw err;
@@ -50,16 +50,16 @@ export async function createCheckoutSession({ client, mode, planSlug, amount }) 
 
     const reference = `sub_${client.id}_${Date.now()}`;
 
-    // Charged in NGN, not price_usd — this Paystack account doesn't have
-    // USD enabled, and the amount here must exactly match what the Plan
-    // was created with in the Paystack dashboard (price_ngn), not a
-    // computed conversion. International cards still work fine on an NGN
-    // charge; Paystack/the card network handles the conversion for the
-    // customer.
+    // USD, matching price_usd — this account is waiting on Paystack to
+    // enable USD (targeting US customers), so paystack_plan_code should
+    // be set to a USD-denominated Plan once that's approved. The NGN
+    // workaround (charging in Naira, letting the card network convert)
+    // was tried and deliberately reverted: it doesn't guarantee the
+    // advertised USD price and shows an unfamiliar currency at checkout.
     const { data } = await paystack.post("/transaction/initialize", {
       email,
-      amount: Math.round(Number(plan.price_ngn) * 100),
-      currency: "NGN",
+      amount: Math.round(Number(plan.price_usd) * 100),
+      currency: "USD",
       plan: plan.paystack_plan_code,
       reference,
       callback_url: callbackUrl,
