@@ -5,7 +5,7 @@ import { createNotification } from "../utils/createNotification.js";
 
 const MIN_CALL_CREDITS = 1;
 const MIN_START_CREDITS = 0;
-const CREDIT_MULTIPLIER = 100;
+const CREDITS_PER_SECOND = 0.5;
 
 function getCallCost(call) {
   return Number(call?.call_cost?.combined_cost ?? call?.callCost?.combinedCost ?? 0);
@@ -41,8 +41,8 @@ function getSentiment(call) {
   return call?.call_analysis?.user_sentiment || call?.callAnalysis?.userSentiment || call?.sentiment || null;
 }
 
-function calculateCreditsFromCost(callCost) {
-  return Math.max(MIN_CALL_CREDITS, Math.ceil(callCost * CREDIT_MULTIPLIER));
+function calculateCreditsFromDuration(durationSeconds) {
+  return Math.max(MIN_CALL_CREDITS, Math.ceil(durationSeconds * CREDITS_PER_SECOND));
 }
 
 // Shared by the live Retell webhook (call_ended) and the reconciliation job —
@@ -113,7 +113,7 @@ export async function processCompletedCall({ call, clientId, rawEvent }) {
     return { processed: true, billed: false };
   }
 
-  const creditsToDeduct = calculateCreditsFromCost(callCost);
+  const creditsToDeduct = calculateCreditsFromDuration(durationSeconds);
 
   const deducted = await deductCreditsAtomic({
     clientId,
