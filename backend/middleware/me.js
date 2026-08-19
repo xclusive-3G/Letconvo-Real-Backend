@@ -13,6 +13,12 @@ import {
 
 const router = express.Router();
 
+// Must match TRIAL_CREDITS in router/register_business.js and
+// CREDITS_PER_SECOND in service/retellCallProcessor.js.
+const TRIAL_CREDITS = 450;
+const CREDITS_PER_MINUTE = 30;
+const TRIAL_MINUTES = TRIAL_CREDITS / CREDITS_PER_MINUTE;
+
 // Uses select+limit(1) instead of .single() so a pre-existing duplicate
 // row (e.g. from a double-submitted signup) can't take down every
 // dashboard route with a raw "multiple rows returned" Postgrest error —
@@ -1196,10 +1202,19 @@ router.get("/me/billing/summary", requireAuth, async (req, res) => {
       0
     );
 
-    const minutesTotal = Number(plan?.monthly_minutes ?? plan?.monthly_credits ?? 0);
-    const minutesRemaining = Math.max(minutesTotal - minutesUsed, 0);
-
     const subscriptionStatus = client.subscription_status || "trial";
+
+    // Trial clients haven't paid for a plan yet, so their minute allowance
+    // is derived from their flat trial credit balance (450 credits = 15 min
+    // at 0.5 credits/sec), not the monthly minutes of the plan they picked
+    // at signup — showing plan minutes here would overstate what they
+    // actually have left.
+    const planMinutesTotal = Number(plan?.monthly_minutes ?? plan?.monthly_credits ?? 0);
+    const minutesTotal = subscriptionStatus === "trial" ? TRIAL_MINUTES : planMinutesTotal;
+    const minutesRemaining =
+      subscriptionStatus === "trial"
+        ? Math.max(Number(client.credits_remaining || 0) / CREDITS_PER_MINUTE, 0)
+        : Math.max(planMinutesTotal - minutesUsed, 0);
 
     return res.json({
       success: true,
