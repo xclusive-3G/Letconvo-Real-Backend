@@ -123,8 +123,13 @@ export async function processPaystackTransaction(data) {
 
   const customerCode = data.customer?.customer_code;
 
+  const authorizationCode = data.authorization?.reusable
+    ? data.authorization.authorization_code
+    : null;
+
   if (data.metadata?.type === "topup") {
     const amount = Number(data.metadata.amount || data.amount / 100);
+    const isAuto = data.metadata?.auto === true || data.metadata?.auto === "true";
 
     const { data: clientRow, error: fetchError } = await supabase
       .from("clients")
@@ -141,7 +146,8 @@ export async function processPaystackTransaction(data) {
       .update({
         credits_remaining: newBalance,
         status: "active",
-        ...(customerCode ? { paystack_customer_code: customerCode } : {})
+        ...(customerCode ? { paystack_customer_code: customerCode } : {}),
+        ...(authorizationCode ? { paystack_authorization_code: authorizationCode } : {})
       })
       .eq("id", clientId);
 
@@ -150,7 +156,7 @@ export async function processPaystackTransaction(data) {
     await createBillingTransaction({
       clientId,
       type: "topup",
-      description: "Balance top-up",
+      description: isAuto ? "Auto top-up" : "Balance top-up",
       amount,
       balanceAfter: newBalance,
       reference
@@ -158,8 +164,8 @@ export async function processPaystackTransaction(data) {
 
     await createNotification({
       clientId,
-      title: "Top-up successful",
-      message: `$${amount.toFixed(2)} added to your balance.`,
+      title: isAuto ? "Auto top-up successful" : "Top-up successful",
+      message: `$${amount.toFixed(2)} ${isAuto ? "was automatically added to" : "added to"} your balance.`,
       type: "alert",
       email: true
     });
@@ -189,6 +195,7 @@ export async function processPaystackTransaction(data) {
       subscription_status: "active",
       status: "active",
       paystack_customer_code: customerCode || null,
+      ...(authorizationCode ? { paystack_authorization_code: authorizationCode } : {}),
       plan_id: plan?.id,
       plan_slug: plan?.slug,
       credits_remaining: newBalance
@@ -297,6 +304,51 @@ export async function handleRenewalCharge(data) {
     type: "alert",
     email: true
   });
+}
+
+// Charges a client's saved card off-session via Paystack's charge_authorization
+// endpoint, using the reusable authorization_code captured from their last
+// successful checkout (see processPaystackTransaction above). Called from
+// pauseClientIfLowCredits whenever a client has auto top-up enabled and their
+// balance drops to/below their configured threshold. Returns true if the
+// charge succeeded and credits were added, false otherwise (no card on file,
+// billing not configured, or the charge itself failed) — callers fall back
+// to normal low-credit handling in that case.
+export async function runAutoTopUp(client) {
+  if (!client.auto_topup || !client.paystack_authorization_code) return false;
+
+  const amount = Number(client.auto_topup_amount || 0);
+  if (!(amount > 0)) return false;
+
+  const paystack = getPaystack();
+  if (!paystack) return false;
+
+  const reference = `autotopup_${client.id}_${Date.now()}`;
+  const email = client.email || client.ownerEmail;
+
+  let chargeData;
+  try {
+    const response = await paystack.post("/transaction/charge_authorization", {
+      authorization_code: client.paystack_authorization_code,
+      email,
+      amount: Math.round(amount * 100),
+      currency: "USD",
+      reference,
+      metadata: { clientId: client.id, type: "topup", amount: String(amount), auto: true }
+    });
+    chargeData = response.data.data;
+  } catch (err) {
+    console.error("❌ Auto top-up charge failed:", err?.response?.data || err.message);
+    return false;
+  }
+
+  if (chargeData?.status !== "success") {
+    console.error("❌ Auto top-up not successful:", chargeData?.status);
+    return false;
+  }
+
+  const result = await processPaystackTransaction(chargeData);
+  return !!result.handled;
 }
 
 export async function handleSubscriptionDisable(data) {

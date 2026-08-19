@@ -1,5 +1,6 @@
 import { supabase } from "../config/supabase.js";
 import { createNotification } from "../utils/createNotification.js";
+import { runAutoTopUp } from "./billing.js";
 
 const MIN_START_CREDITS = 0;
 
@@ -154,13 +155,33 @@ export async function deductCredits({
 export async function pauseClientIfLowCredits(clientId, minimumCredits = 0) {
   const { data: client, error: fetchError } = await supabase
     .from("clients")
-    .select("id, business_name, credits_remaining, status")
+    .select(
+      "id, business_name, credits_remaining, status, email, ownerEmail, auto_topup, auto_topup_threshold, auto_topup_amount, paystack_authorization_code"
+    )
     .eq("id", clientId)
     .single();
 
   if (fetchError) throw fetchError;
 
   const credits = Number(client.credits_remaining || 0);
+
+  // Auto top-up runs off the client's own threshold, independent of
+  // minimumCredits (the hard pause floor) — it's meant to top the balance
+  // up before a client ever gets close to being paused.
+  if (client.auto_topup && credits <= Number(client.auto_topup_threshold ?? 0)) {
+    const toppedUp = await runAutoTopUp(client);
+
+    if (toppedUp) {
+      const { data: refreshed, error: refreshError } = await supabase
+        .from("clients")
+        .select("id, business_name, credits_remaining, status")
+        .eq("id", clientId)
+        .single();
+
+      if (refreshError) throw refreshError;
+      return refreshed;
+    }
+  }
 
   if (credits <= minimumCredits && client.status !== "paused") {
     const { data, error } = await supabase
