@@ -1427,7 +1427,7 @@ router.get("/me/alerts", requireAuth, async (req, res) => {
     if (numbersError) throw numbersError;
 
     const creditsRemaining = Number(client.credits_remaining || 0);
-    const lowCreditThreshold = 100;
+    const lowCreditThreshold = 0;
     const subscriptionStatus = client.subscription_status || "trial";
     const needsSubscription =
       creditsRemaining <= lowCreditThreshold && subscriptionStatus === "trial";
