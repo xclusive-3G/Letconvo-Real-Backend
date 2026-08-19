@@ -1,5 +1,6 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
+import { sendEmail } from "../utils/email.js";
 
 const router = express.Router();
 
@@ -143,6 +144,19 @@ router.post("/register-business", async (req, res) => {
           error: "Business account already exists. Please login instead."
         });
       }
+    }
+
+    // 3c. Notify the admin of a new signup — best-effort (sendEmail never
+    // throws), sent only once this request has won the TOCTOU race above.
+    const adminEmail = (process.env.ADMIN_EMAILS || "").split(",")[0]?.trim();
+    if (adminEmail) {
+      const resolvedOwnerEmail = ownerEmail || oauthUser?.email || "-";
+      await sendEmail({
+        to: adminEmail,
+        subject: `New signup: ${businessName}`,
+        text: `New business signed up: ${businessName}\nOwner: ${ownerName || "-"} <${resolvedOwnerEmail}>\nPlan: ${plan}\nClient ID: ${client.id}`,
+        html: `<p>New business signed up: <b>${businessName}</b></p><p>Owner: ${ownerName || "-"} &lt;${resolvedOwnerEmail}&gt;</p><p>Plan: ${plan}</p><p>Client ID: ${client.id}</p>`
+      });
     }
 
     // 4. Create client settings
