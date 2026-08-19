@@ -5,9 +5,9 @@ const router = express.Router();
 
 // Free trial balance every new signup starts with, regardless of the plan
 // they picked — separate from that plan's monthly_credits, which only
-// applies once they actually subscribe. Matches the "500 credits free
+// applies once they actually subscribe. Matches the "450 credits free
 // trial" promise shown on the signup page (GetStartedPage.jsx).
-const TRIAL_CREDITS = 500;
+const TRIAL_CREDITS = 450;
 
 router.post("/register-business", async (req, res) => {
   try {

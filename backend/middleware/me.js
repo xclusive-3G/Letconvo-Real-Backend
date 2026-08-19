@@ -1034,7 +1034,7 @@ router.get("/me/settings", requireAuth, async (req, res) => {
           plan: plan?.name || "Starter",
           slug: plan?.slug || "starter",
           monthlyPrice: Number(plan?.price_usd || 0),
-          includedMinutes: Number(plan?.monthly_credits || 0),
+          includedMinutes: Number(plan?.monthly_minutes ?? plan?.monthly_credits ?? 0),
           usedMinutes,
           renewalDate: client.renewal_date || null,
           minStartCredits: Number(plan?.min_start_credits || 0)
@@ -1196,7 +1196,7 @@ router.get("/me/billing/summary", requireAuth, async (req, res) => {
       0
     );
 
-    const minutesTotal = Number(plan?.monthly_credits || 0);
+    const minutesTotal = Number(plan?.monthly_minutes ?? plan?.monthly_credits ?? 0);
     const minutesRemaining = Math.max(minutesTotal - minutesUsed, 0);
 
     const subscriptionStatus = client.subscription_status || "trial";
@@ -1322,7 +1322,7 @@ router.get("/plans", async (req, res) => {
         name: p.name,
         slug: p.slug,
         price: Number(p.price_usd || 0),
-        minutes: Number(p.monthly_credits || 0),
+        minutes: Number(p.monthly_minutes ?? p.monthly_credits ?? 0),
         perMin: Number(p.extra_minute_price || 0.22),
         features: p.features || []
       }))
