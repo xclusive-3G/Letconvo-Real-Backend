@@ -19,6 +19,11 @@ const TRIAL_CREDITS = 450;
 const CREDITS_PER_MINUTE = 30;
 const TRIAL_MINUTES = TRIAL_CREDITS / CREDITS_PER_MINUTE;
 
+// 1 credit = $0.01 (100 credits per dollar) — anchored to the plans table
+// (e.g. Starter: $120 = 12,000 monthly_credits = 400 monthly_minutes).
+// Must match CREDITS_PER_DOLLAR in service/billing.js.
+const CREDITS_PER_DOLLAR = 100;
+
 // Uses select+limit(1) instead of .single() so a pre-existing duplicate
 // row (e.g. from a double-submitted signup) can't take down every
 // dashboard route with a raw "multiple rows returned" Postgrest error —
@@ -1220,7 +1225,7 @@ router.get("/me/billing/summary", requireAuth, async (req, res) => {
     return res.json({
       success: true,
       balance: {
-        dollarBalance: Number(client.credits_remaining || 0),
+        dollarBalance: Number(client.credits_remaining || 0) / CREDITS_PER_DOLLAR,
         creditsRemaining: Number(client.credits_remaining || 0),
         monthlySpend: Number(monthlySpend.toFixed(2)),
 

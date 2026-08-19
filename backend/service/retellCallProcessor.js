@@ -7,6 +7,11 @@ const MIN_CALL_CREDITS = 1;
 const MIN_START_CREDITS = 0;
 const CREDITS_PER_SECOND = 0.5;
 
+// 1 credit = $0.01 (100 credits per dollar) — anchored to the plans table
+// (e.g. Starter: $120 = 12,000 monthly_credits = 400 monthly_minutes).
+// Must match CREDITS_PER_DOLLAR in middleware/me.js and service/billing.js.
+const CREDITS_PER_DOLLAR = 100;
+
 function getCallCost(call) {
   return Number(call?.call_cost?.combined_cost ?? call?.callCost?.combinedCost ?? 0);
 }
@@ -136,7 +141,7 @@ export async function processCompletedCall({ call, clientId, rawEvent }) {
     type: "usage",
     description: `AI minutes consumed (${durationMinutes} min)`,
     amount: -Number(callCost || 0),
-    balanceAfter: Number(latestClient?.credits_remaining || 0),
+    balanceAfter: Number(latestClient?.credits_remaining || 0) / CREDITS_PER_DOLLAR,
     minutes: durationMinutes,
     reference: retellCallId
   });
