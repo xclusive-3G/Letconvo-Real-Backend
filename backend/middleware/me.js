@@ -1211,10 +1211,11 @@ router.get("/me/billing/summary", requireAuth, async (req, res) => {
     // actually have left.
     const planMinutesTotal = Number(plan?.monthly_minutes ?? plan?.monthly_credits ?? 0);
     const minutesTotal = subscriptionStatus === "trial" ? TRIAL_MINUTES : planMinutesTotal;
-    const minutesRemaining =
+    const minutesRemainingRaw =
       subscriptionStatus === "trial"
         ? Math.max(Number(client.credits_remaining || 0) / CREDITS_PER_MINUTE, 0)
         : Math.max(planMinutesTotal - minutesUsed, 0);
+    const minutesRemaining = Math.round(minutesRemainingRaw * 10) / 10;
 
     return res.json({
       success: true,
