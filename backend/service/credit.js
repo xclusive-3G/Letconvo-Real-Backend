@@ -1,7 +1,7 @@
 import { supabase } from "../config/supabase.js";
 import { createNotification } from "../utils/createNotification.js";
 
-const MIN_START_CREDITS = 100;
+const MIN_START_CREDITS = 0;
 
 export async function getClientByTelnyxNumber(telnyxNumber) {
   const { data, error } = await supabase
@@ -151,7 +151,7 @@ export async function deductCredits({
   return newBalance;
 }
 
-export async function pauseClientIfLowCredits(clientId, minimumCredits = 100) {
+export async function pauseClientIfLowCredits(clientId, minimumCredits = 0) {
   const { data: client, error: fetchError } = await supabase
     .from("clients")
     .select("id, business_name, credits_remaining, status")
@@ -217,7 +217,7 @@ export async function pauseClientIfLowCredits(clientId, minimumCredits = 100) {
 // Backward compatibility for old imports
 export const pauseClientIfNoCredits = pauseClientIfLowCredits;
 
-export async function activateClientIfEnoughCredits(clientId, minimumCredits = 100) {
+export async function activateClientIfEnoughCredits(clientId, minimumCredits = 0) {
   const { data: client, error } = await supabase
     .from("clients")
     .select("id, credits_remaining, status")

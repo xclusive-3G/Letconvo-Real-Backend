@@ -4,7 +4,7 @@ import { deductCreditsAtomic, pauseClientIfLowCredits } from "./credit.js";
 import { createNotification } from "../utils/createNotification.js";
 
 const MIN_CALL_CREDITS = 1;
-const MIN_START_CREDITS = 100;
+const MIN_START_CREDITS = 0;
 const CREDIT_MULTIPLIER = 100;
 
 function getCallCost(call) {

@@ -157,7 +157,7 @@ export async function processCallbackJob(recoveryId) {
     return null;
   }
 
-  await pauseClientIfLowCredits(recovery.clientId, MIN_START_CREDITS);
+  await pauseClientIfLowCredits(recovery.clientId);
 
   console.log("📞 Calling Retell now...");
 

@@ -146,7 +146,7 @@ import { transferCallToRetellSip } from "../service/telnyx.js";
 
 const router = express.Router();
 
-const MIN_START_CREDITS = 100; // block live/callback if client has less than this
+const MIN_START_CREDITS = 0; // block live/callback if client has less than this
 
 async function hangupCall(callControlId) {
   await axios.post(
