@@ -21,6 +21,9 @@ router.post("/register-business", async (req, res) => {
       greetingMessage,
       openTime,
       closeTime,
+      bookingFields,
+      servicesOffered,
+      bookingPolicies,
       plan,
       ownerName,
       ownerEmail,
@@ -155,7 +158,14 @@ router.post("/register-business", async (req, res) => {
         close_hour: closeTime,
         businessType,
         email: ownerEmail || oauthUser?.email,
-        plan
+        plan,
+        // What the AI should collect from a caller before booking, plus
+        // free-text service list/policies — reference material used to
+        // hand-build this client's Retell agent prompt (see GetStartedPage's
+        // "Booking Details" step).
+        booking_info_fields: Array.isArray(bookingFields) ? bookingFields : [],
+        services_offered: servicesOffered || null,
+        booking_policies: bookingPolicies || null
       });
 
     if (settingsError) throw settingsError;
