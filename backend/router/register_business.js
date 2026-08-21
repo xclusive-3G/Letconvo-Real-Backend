@@ -10,11 +10,18 @@ const router = express.Router();
 // trial" promise shown on the signup page (GetStartedPage.jsx).
 const TRIAL_CREDITS = 450;
 
+// Letconvo is only staffed/supported for US and Canadian businesses right
+// now (Telnyx numbers, business hours, etc. all assume NANP). GetStartedPage
+// blocks unsupported countries client-side, but that's UX only — this is
+// the actual gate, since /register-business can be hit directly.
+const SUPPORTED_COUNTRIES = new Set(["united states", "usa", "us", "canada", "ca"]);
+
 router.post("/register-business", async (req, res) => {
   try {
     const {
       businessName,
       businessType,
+      country,
       businessPhone,
       businessEmail,
       businessAddress,
@@ -30,6 +37,12 @@ router.post("/register-business", async (req, res) => {
       ownerEmail,
       password
     } = req.body;
+
+    if (!SUPPORTED_COUNTRIES.has(String(country || "").trim().toLowerCase())) {
+      return res.status(400).json({
+        error: "Letconvo is currently only available to businesses in the United States and Canada."
+      });
+    }
 
     // A Google (or other OAuth) sign-in already creates the Supabase auth
     // user before this endpoint is ever called — GetStartedPage sends that
