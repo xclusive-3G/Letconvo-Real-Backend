@@ -337,17 +337,20 @@ router.put("/companies/:clientId/phone-number", requireAdmin, async (req, res) =
     await createNotification({
       clientId,
       title: "Phone number added",
-      message: `Your Letconvo number ${telnyxNumber} has been added and is ready to receive calls.`,
+      message: `Your Letconvo number ${telnyxNumber} is live and already answering calls.`,
       type: "phone",
       email: true,
       emailOverride: {
-        subject: "Your Letconvo phone number is live",
-        title: "📞 Your phone number is live",
+        // Subject stays plain/no-emoji on purpose (see the low-credit email
+        // for why) — the celebratory tone lives in the in-email title instead.
+        subject: "Your Letconvo number is ready",
+        title: "🎉 You're live — calls are being answered",
         paragraphs: [
-          `Your Letconvo AI receptionist is now reachable at ${telnyxNumber}.`,
-          "Incoming calls to this number will be answered by your AI receptionist right away."
+          "Your dedicated Letconvo number is active, and your AI receptionist is already standing by — answering calls, capturing leads, and booking appointments around the clock.",
+          "No more missed calls or voicemail tag. Every call that comes in from now on gets picked up instantly, day or night."
         ],
         highlight: { label: "Your Letconvo Number", value: telnyxNumber },
+        preCta: "Give it a try — call the number yourself and hear your AI receptionist in action.",
         ctaLabel: "View Dashboard"
       }
     });
