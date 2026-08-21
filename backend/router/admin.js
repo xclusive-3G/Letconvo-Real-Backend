@@ -2,6 +2,7 @@ import express from "express";
 import { supabase } from "../config/supabase.js";
 import { requireAdmin } from "../middleware/adminAuth.js";
 import { activateClientIfEnoughCredits } from "../service/credit.js";
+import { createNotification } from "../utils/createNotification.js";
 
 const router = express.Router();
 
@@ -330,6 +331,26 @@ router.put("/companies/:clientId/phone-number", requireAdmin, async (req, res) =
       if (error) throw error;
       number = data;
     }
+
+    // Best-effort — createNotification never throws, so a notification/email
+    // failure never blocks the actual number assignment above.
+    await createNotification({
+      clientId,
+      title: "Phone number added",
+      message: `Your Letconvo number ${telnyxNumber} has been added and is ready to receive calls.`,
+      type: "phone",
+      email: true,
+      emailOverride: {
+        subject: "Your Letconvo phone number is live",
+        title: "📞 Your phone number is live",
+        paragraphs: [
+          `Your Letconvo AI receptionist is now reachable at ${telnyxNumber}.`,
+          "Incoming calls to this number will be answered by your AI receptionist right away."
+        ],
+        highlight: { label: "Your Letconvo Number", value: telnyxNumber },
+        ctaLabel: "View Dashboard"
+      }
+    });
 
     return res.json({ success: true, number });
   } catch (err) {
