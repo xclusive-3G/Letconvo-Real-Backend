@@ -5,14 +5,15 @@ import {
   BOOKING_STATUSES,
   ACTIVE_STATUSES,
   scheduleAppointmentReminder,
-  cancelAppointmentReminder
+  cancelAppointmentReminder,
+  resolveRetellClientId
 } from "../utils/bookings.js";
 
 const router = express.Router();
 
 // Called by the Retell agent to confirm, cancel, or reschedule a booking.
 router.post("/retell/update-booking", async (req, res) => {
-  const clientId = req.body.clientId || req.query.clientId;
+  const clientId = resolveRetellClientId(req);
   const { phone, status, newDate, newTime } = req.body;
 
   if (!clientId || !phone) {

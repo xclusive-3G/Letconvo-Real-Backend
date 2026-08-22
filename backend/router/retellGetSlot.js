@@ -1,6 +1,6 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
-import { getBusinessHours, ACTIVE_STATUSES } from "../utils/bookings.js";
+import { getBusinessHours, ACTIVE_STATUSES, resolveRetellClientId } from "../utils/bookings.js";
 
 const router = express.Router();
 
@@ -9,7 +9,7 @@ router.post("/retell/get-slots", async (req, res) => {
   console.log("📅 Fetching available slots...");
 
   try {
-    const clientId = req.body.clientId || req.query.clientId;
+    const clientId = resolveRetellClientId(req);
     const { days } = req.body;
 
     if (!clientId) {
@@ -99,7 +99,7 @@ const formatHour = (h) => {
 // of relying on hours being baked into the call setup.
 router.post("/retell/get-business-hours", async (req, res) => {
   try {
-    const clientId = req.body.clientId || req.query.clientId;
+    const clientId = resolveRetellClientId(req);
 
     if (!clientId) {
       return res.status(400).json({ error: "clientId is required" });

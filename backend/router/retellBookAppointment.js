@@ -1,6 +1,6 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
-import { normalizePhone, ACTIVE_STATUSES, scheduleAppointmentReminder } from "../utils/bookings.js";
+import { normalizePhone, ACTIVE_STATUSES, scheduleAppointmentReminder, resolveRetellClientId } from "../utils/bookings.js";
 import { createNotification } from "../utils/createNotification.js";
 
 const router = express.Router();
@@ -8,7 +8,7 @@ const router = express.Router();
 // Called by the Retell agent (or a booking widget) to create an appointment.
 router.post("/book-appointment", async (req, res) => {
   try {
-    const clientId = req.body.clientId || req.query.clientId;
+    const clientId = resolveRetellClientId(req);
     const {
       customerName,
       customerPhone,

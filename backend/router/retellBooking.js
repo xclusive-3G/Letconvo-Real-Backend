@@ -2,14 +2,15 @@ import express from "express";
 import {
   findLatestBooking,
   formatDateHuman,
-  formatTimeHuman
+  formatTimeHuman,
+  resolveRetellClientId
 } from "../utils/bookings.js";
 
 const router = express.Router();
 
 // Called by the Retell agent to look up an existing booking by phone number.
 router.post("/retell/get-booking", async (req, res) => {
-  const clientId = req.body.clientId || req.query.clientId;
+  const clientId = resolveRetellClientId(req);
   const { phone } = req.body;
 
   if (!clientId || !phone) {

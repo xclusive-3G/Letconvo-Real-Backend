@@ -46,6 +46,24 @@ export function normalizePhone(phone) {
   return String(phone || "").replace(/[^\d]/g, "");
 }
 
+// The master Retell agent's tools deliver clientId via an
+// {{client_id}}-templated SIP header / dynamic variable (see
+// router/telnyxVoiceWebhook2.js and router/retellInboundWebhook.js), which
+// Retell may forward as a header, or as a query param under either
+// camelCase or snake_case depending on the call path — checking every
+// source and both spellings makes each endpoint resilient to whichever one
+// actually arrives, instead of depending on one assumption being right.
+export function resolveRetellClientId(req) {
+  return (
+    req.headers["x-client-id"] ||
+    req.headers["client-id"] ||
+    req.body?.clientId ||
+    req.body?.client_id ||
+    req.query?.clientId ||
+    req.query?.client_id
+  );
+}
+
 // "14:05:00" (what Postgres returns for a `time` column) -> "14:05"
 export function toHHMM(time) {
   return String(time || "").slice(0, 5);
