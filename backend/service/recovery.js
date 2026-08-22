@@ -9,10 +9,8 @@ import {
 import { callbackQueue } from "../queue/callBackQueue.js";
 import { createRetellCallback } from "./retell.js";
 import { sendMissedCallSms } from "./telnyx.js";
-import { deductCreditsAtomic, pauseClientIfLowCredits, SMS_CREDIT_COST } from "./credit.js";
+import { deductCreditsAtomic, hasEnoughCredits, pauseClientIfLowCredits, SMS_CREDIT_COST } from "./credit.js";
 import { isSmsNotifEnabled } from "../utils/createNotification.js";
-
-// const MIN_CALL_CREDITS = 5;
 
 function isWithinAllowedHours() {
   const now = new Date();
@@ -148,13 +146,18 @@ export async function processCallbackJob(recoveryId) {
     return null;
   }
 
-  // Reserve minimum credits BEFORE Retell call
-  const reserved = await deductCreditsAtomic({
-    clientId: recovery.clientId,
-    recoveryId: recovery.id,
-    // amount: MIN_CALL_CREDITS,
-    description: "AI callback minimum reservation"
-  });
+  // Affordability check BEFORE placing the Retell call — not a deduction.
+  // The real cost is charged after the call ends via
+  // retellCallProcessor.js's processCompletedCall (the single shared
+  // billing entry point), so deducting anything here too would double-bill.
+  // This previously called deductCreditsAtomic with no `amount` (the
+  // MIN_CALL_CREDITS reservation was disabled by commenting out the amount
+  // line, but the deduction call itself was left in place), which wrote
+  // NaN into credits_remaining on every callback attempt.
+  // >= 1, not >= 0 — matches the inbound-call gates' <= 0 floor
+  // (telnyxVoiceWebhook2.js / retellInboundWebhook.js): a client at
+  // exactly 0 credits must not get a callback placed either.
+  const reserved = await hasEnoughCredits(recovery.clientId, 1);
 
   if (!reserved) {
     await updateRecovery(recovery.id, {
