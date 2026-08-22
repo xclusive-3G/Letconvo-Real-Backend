@@ -138,7 +138,6 @@
 import express from "express";
 import axios from "axios";
 import { triggerMissedCallRecovery } from "../service/recovery.js";
-import { getClientByTelnyxNumber } from "../service/credit.js";
 import { logger } from "../utils/logger.js";
 import { supabase } from "../config/supabase.js";
 // import { createRetellLiveCall } from "../service/retell.js";
@@ -244,13 +243,62 @@ router.post("/telnyx/voice", async (req, res) => {
       return;
     }
 
-    const client = await getClientByTelnyxNumber(to);
+    // Fetches client + client_settings in a single round trip (relies on
+    // the client_settings.client_id -> clients.id FK — see
+    // 006_add_client_settings_fk.sql) rather than getClientByTelnyxNumber
+    // followed by a second sequential client_settings query. Telnyx gives
+    // roughly ~1 second before it gives up on an unanswered inbound call
+    // (observed: a transfer at 0.94s succeeded, one at 0.75s that hit two
+    // sequential DB round trips first did not), so cutting one full
+    // network hop off this path is what keeps the live-call transfer
+    // inside that window.
+    const { data: numberRow, error: lookupError } = await supabase
+      .from("client_numbers")
+      .select(`
+        id,
+        telnyx_number,
+        client:clients (
+          id,
+          business_name,
+          credits_remaining,
+          status,
+          receptionist_mode,
+          plan_id,
+          client_settings (
+            retell_agent_id,
+            businessType,
+            greeting,
+            open_hour,
+            close_hour,
+            booking_info_fields,
+            services_offered,
+            booking_policies
+          )
+        )
+      `)
+      .eq("telnyx_number", to)
+      .maybeSingle();
+
+    if (lookupError) {
+      console.log("❌ Failed to look up client for number:", to, lookupError.message);
+      await hangupCall(callControlId);
+      return;
+    }
+
+    const client = numberRow?.client || null;
 
     if (!client) {
       console.log("❌ No client found for number:", to);
       await hangupCall(callControlId);
       return;
     }
+
+    // PostgREST returns the embedded child as an array unless it knows the
+    // relationship is one-to-one (no unique constraint on client_id here),
+    // so normalize either shape defensively.
+    const settings = Array.isArray(client.client_settings)
+      ? client.client_settings[0] || null
+      : client.client_settings || null;
 
     // ✅ BLOCK BEFORE RETELL OR CALLBACK STARTS
     if (
@@ -284,18 +332,6 @@ router.post("/telnyx/voice", async (req, res) => {
 
 if (mode === "live") {
   console.log("☎️ LIVE MODE → transferring call to Retell SIP");
-
-  const { data: settings, error } = await supabase
-    .from("client_settings")
-    .select("retell_agent_id, businessType, greeting, open_hour, close_hour, booking_info_fields, services_offered, booking_policies")
-    .eq("client_id", client.id)
-    .maybeSingle();
-
-  if (error) {
-    console.log("❌ Failed to load client settings:", client.id, error.message);
-    await hangupCall(callControlId);
-    return;
-  }
 
   // A per-client agent (hand-built by an admin) always wins if set — this
   // keeps any already-configured client untouched. Everyone else (every
