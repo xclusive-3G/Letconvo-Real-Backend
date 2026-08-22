@@ -72,9 +72,11 @@ router.post("/webhooks/retell/inbound-call", async (req, res) => {
       return res.json({ call_inbound: { reject: true } });
     }
 
+    // <= not < — see telnyxVoiceWebhook2.js's identical gate for why a
+    // client sitting at exactly the floor must be blocked here too.
     if (
       client.status !== "active" ||
-      Number(client.credits_remaining || 0) < MIN_START_CREDITS
+      Number(client.credits_remaining || 0) <= MIN_START_CREDITS
     ) {
       console.log("❌ Retell inbound webhook: client blocked", {
         clientId: client.id,

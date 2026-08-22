@@ -146,7 +146,7 @@ import { telnyxKeepAliveAgent } from "../config/httpAgents.js";
 
 const router = express.Router();
 
-const MIN_START_CREDITS = 0; // block live/callback if client has less than this
+const MIN_START_CREDITS = 0; // block live/callback if client has this many credits or fewer
 
 async function hangupCall(callControlId) {
   await axios.post(
@@ -310,9 +310,14 @@ router.post("/telnyx/voice", async (req, res) => {
       : client.client_settings || null;
 
     // ✅ BLOCK BEFORE RETELL OR CALLBACK STARTS
+    // <= not < — a client sitting at exactly the floor (0) must be blocked
+    // here too, matching pauseClientIfLowCredits's own <= floor. A strict
+    // < let calls through indefinitely once a client landed on exactly 0
+    // credits (e.g. after a deduction leaves the balance at exactly 0, or
+    // a manual admin adjustment), since 0 < 0 is false.
     if (
       client.status !== "active" ||
-      Number(client.credits_remaining || 0) < MIN_START_CREDITS
+      Number(client.credits_remaining || 0) <= MIN_START_CREDITS
     ) {
       console.log("❌ Client blocked before Retell starts:", {
         clientId: client.id,
