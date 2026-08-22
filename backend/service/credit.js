@@ -4,6 +4,13 @@ import { runAutoTopUp } from "./billing.js";
 
 const MIN_START_CREDITS = 0;
 
+// The hard-pause floor (MIN_START_CREDITS) is 0, so by the time a client
+// gets paused it's already too late to call it a "warning" — this is the
+// separate, earlier threshold that triggers a one-time "getting low"
+// email while the account is still fully active. Matches the value
+// MIN_START_CREDITS itself used before it was lowered to 0.
+const LOW_CREDIT_WARNING_THRESHOLD = 100;
+
 // Flat per-message cost for any outbound SMS this app sends (missed-call
 // recovery, staff-initiated appointment reminders, etc.) — deliberately
 // simple/flat rather than duration-based like call billing, since SMS cost
@@ -162,7 +169,7 @@ export async function pauseClientIfLowCredits(clientId, minimumCredits = 0) {
   const { data: client, error: fetchError } = await supabase
     .from("clients")
     .select(
-      "id, business_name, credits_remaining, status, email, ownerEmail, auto_topup, auto_topup_threshold, auto_topup_amount, paystack_authorization_code"
+      "id, business_name, credits_remaining, status, email, ownerEmail, auto_topup, auto_topup_threshold, auto_topup_amount, paystack_authorization_code, low_credit_warned"
     )
     .eq("id", clientId)
     .single();
@@ -178,6 +185,12 @@ export async function pauseClientIfLowCredits(clientId, minimumCredits = 0) {
     const toppedUp = await runAutoTopUp(client);
 
     if (toppedUp) {
+      // Balance just went back up — clear the warning flag so a future
+      // dip below the threshold warns again instead of staying silent.
+      if (client.low_credit_warned) {
+        await supabase.from("clients").update({ low_credit_warned: false }).eq("id", clientId);
+      }
+
       const { data: refreshed, error: refreshError } = await supabase
         .from("clients")
         .select("id, business_name, credits_remaining, status")
@@ -229,6 +242,39 @@ export async function pauseClientIfLowCredits(clientId, minimumCredits = 0) {
     });
 
     return data;
+  }
+
+  // One-time "getting low" email, well before the hard-pause floor — the
+  // pause email above only fires once service has already stopped, which
+  // isn't a warning so much as an obituary. low_credit_warned makes this
+  // fire once per dip below the threshold, not on every deduction while
+  // already low (cleared above once the balance recovers).
+  if (credits > minimumCredits && credits <= LOW_CREDIT_WARNING_THRESHOLD && !client.low_credit_warned) {
+    await supabase.from("clients").update({ low_credit_warned: true }).eq("id", clientId);
+
+    await createNotification({
+      clientId: client.id,
+      title: "Credit balance getting low",
+      message: `Your credit balance is getting low — ${credits} credits remaining. Top up soon to avoid an interruption.`,
+      type: "alert",
+      email: true,
+      emailOverride: {
+        subject: "Your Letconvo credit balance is getting low",
+        title: "⚠️ Credit balance getting low",
+        paragraphs: [
+          "Your LetConvo credit balance is running low. Your AI receptionist is still active, but service will pause once your balance reaches zero.",
+          "Top up now to stay ahead of it and avoid any interruption to calls, messages, and automations."
+        ],
+        highlight: { label: "Current Balance", value: `${credits} credits` },
+        preCta: "👉 Recharge now before it runs out.",
+        ctaLabel: "Recharge Now"
+      }
+    });
+  } else if (credits > LOW_CREDIT_WARNING_THRESHOLD && client.low_credit_warned) {
+    // Recovered above the warning line without going through auto top-up
+    // above (e.g. a manual admin credit adjustment) — clear the flag here
+    // too so the next dip warns again.
+    await supabase.from("clients").update({ low_credit_warned: false }).eq("id", clientId);
   }
 
   console.log("✅ Client not paused:", {
