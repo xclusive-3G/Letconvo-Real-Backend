@@ -11,7 +11,9 @@ const router = express.Router();
 // Called by the Retell agent to look up an existing booking by phone number.
 router.post("/retell/get-booking", async (req, res) => {
   const clientId = resolveRetellClientId(req);
-  const { phone } = req.body;
+  // Same schema-drift issue as book_appointment — the LLM sometimes sends
+  // phone_number instead of the declared phone property.
+  const phone = req.body.phone || req.body.phone_number;
 
   if (!clientId || !phone) {
     return res.status(400).json({ found: false, error: "clientId and phone are required" });

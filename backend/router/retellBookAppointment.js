@@ -9,15 +9,21 @@ const router = express.Router();
 router.post("/book-appointment", async (req, res) => {
   try {
     const clientId = resolveRetellClientId(req);
-    const {
-      customerName,
-      customerPhone,
-      customerEmail,
-      service,
-      date,       // "YYYY-MM-DD"
-      time,       // "HH:MM"
-      notes
-    } = req.body;
+    const b = req.body;
+
+    // The Retell agent's LLM doesn't reliably stick to the tool's declared
+    // schema property names on every call (observed real calls sending
+    // full_name/phone_number/email_address/service_reason instead of
+    // customerName/customerPhone/customerEmail/service, even though the
+    // schema only defines the latter) — accepting both keeps a booking
+    // from silently failing over a naming mismatch outside our control.
+    const customerName = b.customerName || b.full_name || b.name;
+    const customerPhone = b.customerPhone || b.phone_number || b.phone;
+    const customerEmail = b.customerEmail || b.email_address || b.email;
+    const service = b.service || b.service_reason || b.reason;
+    const date = b.date; // "YYYY-MM-DD"
+    const time = b.time; // "HH:MM"
+    const notes = b.notes;
 
     if (!clientId || !customerName || !customerPhone || !date || !time) {
       return res.status(400).json({

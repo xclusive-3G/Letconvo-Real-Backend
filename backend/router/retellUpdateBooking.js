@@ -14,7 +14,12 @@ const router = express.Router();
 // Called by the Retell agent to confirm, cancel, or reschedule a booking.
 router.post("/retell/update-booking", async (req, res) => {
   const clientId = resolveRetellClientId(req);
-  const { phone, status, newDate, newTime } = req.body;
+  // Same schema-drift issue as book_appointment/get_existing_booking — the
+  // LLM sometimes sends alternate field names instead of the declared ones.
+  const phone = req.body.phone || req.body.phone_number;
+  const status = req.body.status;
+  const newDate = req.body.newDate || req.body.new_date || req.body.date;
+  const newTime = req.body.newTime || req.body.new_time || req.body.time;
 
   if (!clientId || !phone) {
     return res.json({ success: false, error: "clientId and phone are required" });
