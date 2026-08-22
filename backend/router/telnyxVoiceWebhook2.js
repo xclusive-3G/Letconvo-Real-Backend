@@ -141,7 +141,7 @@ import { triggerMissedCallRecovery } from "../service/recovery.js";
 import { logger } from "../utils/logger.js";
 import { supabase } from "../config/supabase.js";
 // import { createRetellLiveCall } from "../service/retell.js";
-import { transferCallToRetellSip } from "../service/telnyx.js";
+import { transferCallToRetellSip, warmTelnyxConnection } from "../service/telnyx.js";
 import { telnyxKeepAliveAgent } from "../config/httpAgents.js";
 
 const router = express.Router();
@@ -244,6 +244,13 @@ router.post("/telnyx/voice", async (req, res) => {
       });
       return;
     }
+
+    // Not awaited on purpose — starts the TLS handshake to Telnyx right
+    // now, in parallel with the Supabase lookup below, instead of paying
+    // for it cold at the very end of the critical path (see
+    // warmTelnyxConnection's own comment for why keep-alive reuse alone
+    // isn't enough for infrequent, minutes-apart phone calls).
+    warmTelnyxConnection();
 
     // Fetches client + client_settings in a single round trip (relies on
     // the client_settings.client_id -> clients.id FK — see

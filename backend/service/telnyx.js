@@ -39,6 +39,27 @@ export async function sendMissedCallSms(to) {
 }
 
 
+// Telnyx calls (spaced minutes apart in real usage) almost never land
+// close enough together for the keep-alive pool to actually reuse a
+// socket — so instead of hoping a previous request left a warm connection
+// behind, kick the TCP+TLS handshake off proactively the moment we know
+// we're going to need Telnyx, in parallel with the Supabase lookup that
+// has to happen first anyway. By the time transferCallToRetellSip/
+// hangupCall actually fire, the handshake has had a head start instead of
+// being paid for cold, sequentially, at the end of the critical path.
+// Fire-and-forget: the response is irrelevant, only the connection matters,
+// and this must never be allowed to throw or delay the caller.
+export function warmTelnyxConnection() {
+  axios
+    .get("https://api.telnyx.com/v2/", {
+      headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` },
+      httpsAgent: telnyxKeepAliveAgent,
+      timeout: 3000,
+      validateStatus: () => true
+    })
+    .catch(() => {});
+}
+
 // NOTE: this connection is an FQDN/SIP-trunk-style Telnyx connection, not a
 // traditional Call Control app — Telnyx rejects an explicit /actions/answer
 // on these calls with "Can not issue an answer command on an outbound call"
