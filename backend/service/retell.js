@@ -8,6 +8,52 @@ const formatHour = (h) => {
   return `${hour12}:00 ${period}`;
 };
 
+// Must match the route in router/retellInboundWebhook.js exactly — this is
+// what Retell POSTs to before answering any call on a number imported this
+// way, to resolve override_agent_id + dynamic_variables.
+const RETELL_INBOUND_WEBHOOK_URL = "https://api.letconvo.live/webhooks/retell/inbound-call";
+
+// Registers a Telnyx-owned number directly with Retell as a native inbound
+// number (10s webhook budget) instead of relying on the app's own
+// SIP-transfer path (~1s Telnyx budget, too tight for a DB round trip —
+// see router/telnyxVoiceWebhook2.js). Used by the admin panel's "migrate
+// to Retell-native routing" action. Safe to call on a number that's
+// already imported — Retell rejects the create with an "already exists"
+// style error, so this deletes the stale registration and retries once
+// rather than requiring the admin to do that manually first.
+export async function importPhoneNumberToRetellNative({ phoneNumber, agentId, nickname, sipCreds }) {
+  const payload = {
+    phone_number: phoneNumber,
+    termination_uri: sipCreds.terminationUri,
+    sip_trunk_auth_username: sipCreds.authUsername,
+    sip_trunk_auth_password: sipCreds.authPassword,
+    transport: sipCreds.transport,
+    nickname: nickname || phoneNumber,
+    inbound_agents: [{ agent_id: agentId, weight: 1 }],
+    inbound_webhook_url: RETELL_INBOUND_WEBHOOK_URL
+  };
+
+  const headers = {
+    Authorization: `Bearer ${process.env.RETELL_API_KEY}`,
+    "Content-Type": "application/json"
+  };
+
+  try {
+    const res = await axios.post("https://api.retellai.com/import-phone-number", payload, { headers });
+    return res.data;
+  } catch (err) {
+    const message = JSON.stringify(err.response?.data || "");
+    if (!/already|exist/i.test(message)) throw err;
+
+    await axios
+      .delete(`https://api.retellai.com/delete-phone-number/${encodeURIComponent(phoneNumber)}`, { headers })
+      .catch(() => {});
+
+    const retryRes = await axios.post("https://api.retellai.com/import-phone-number", payload, { headers });
+    return retryRes.data;
+  }
+}
+
 export async function createRetellCallback({
   toNumber,
   recoveryId,

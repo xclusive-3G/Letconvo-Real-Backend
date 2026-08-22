@@ -39,6 +39,43 @@ export async function sendMissedCallSms(to) {
 }
 
 
+// Looks up the SIP trunk credentials Retell needs to be imported as a
+// native inbound number for a Telnyx-owned number — used by the admin
+// panel's "migrate to Retell-native routing" action
+// (router/admin.js's POST /companies/:clientId/migrate-to-retell-native).
+// Resolves the number -> its Telnyx connection -> that connection's FQDN
+// trunk auth (the same connection every client's number already uses).
+export async function getTelnyxConnectionCredentials(phoneNumber) {
+  const numberRes = await axios.get(
+    `https://api.telnyx.com/v2/phone_numbers?filter[phone_number]=${encodeURIComponent(phoneNumber)}`,
+    {
+      headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` },
+      httpsAgent: telnyxKeepAliveAgent
+    }
+  );
+
+  const numberInfo = numberRes.data?.data?.[0];
+  if (!numberInfo) throw new Error(`Telnyx has no record of phone number ${phoneNumber}`);
+
+  const connRes = await axios.get(
+    `https://api.telnyx.com/v2/fqdn_connections/${numberInfo.connection_id}`,
+    {
+      headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY}` },
+      httpsAgent: telnyxKeepAliveAgent
+    }
+  );
+
+  const conn = connRes.data?.data;
+  if (!conn) throw new Error(`Telnyx connection ${numberInfo.connection_id} not found`);
+
+  return {
+    terminationUri: "sip.telnyx.com",
+    authUsername: conn.user_name,
+    authPassword: conn.password,
+    transport: conn.transport_protocol || "TCP"
+  };
+}
+
 // Telnyx calls (spaced minutes apart in real usage) almost never land
 // close enough together for the keep-alive pool to actually reuse a
 // socket — so instead of hoping a previous request left a warm connection

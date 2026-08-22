@@ -3,6 +3,8 @@ import { supabase } from "../config/supabase.js";
 import { requireAdmin } from "../middleware/adminAuth.js";
 import { activateClientIfEnoughCredits } from "../service/credit.js";
 import { createNotification } from "../utils/createNotification.js";
+import { getTelnyxConnectionCredentials } from "../service/telnyx.js";
+import { importPhoneNumberToRetellNative } from "../service/retell.js";
 
 const router = express.Router();
 
@@ -404,6 +406,61 @@ router.put("/companies/:clientId/retell-agent", requireAdmin, async (req, res) =
   } catch (err) {
     console.error("❌ Admin Retell agent assignment error:", err);
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// Moves a client's already-assigned phone number off the app's own
+// Telnyx-SIP-transfer routing (router/telnyxVoiceWebhook2.js — found to
+// have a call-abandon window from Telnyx too tight for a DB lookup, ~1s)
+// onto Retell's native inbound-number routing (router/
+// retellInboundWebhook.js — Retell gives a 10s budget for the same
+// per-client agent/dynamic-variable resolution instead). Idempotent: safe
+// to re-run on a number that's already been migrated.
+router.post("/companies/:clientId/migrate-to-retell-native", requireAdmin, async (req, res) => {
+  try {
+    const { clientId } = req.params;
+
+    const { data: numberRow, error: numberError } = await supabase
+      .from("client_numbers")
+      .select("telnyx_number")
+      .eq("client_id", clientId)
+      .maybeSingle();
+
+    if (numberError) throw numberError;
+
+    if (!numberRow?.telnyx_number) {
+      return res.status(400).json({ error: "This company has no phone number assigned yet — assign one first." });
+    }
+
+    const [{ data: client, error: clientError }, { data: settings, error: settingsError }] = await Promise.all([
+      supabase.from("clients").select("business_name").eq("id", clientId).maybeSingle(),
+      supabase.from("client_settings").select("retell_agent_id").eq("client_id", clientId).maybeSingle()
+    ]);
+
+    if (clientError) throw clientError;
+    if (settingsError) throw settingsError;
+
+    const agentId = settings?.retell_agent_id?.trim() || process.env.RETELL_LIVE_AGENT_ID;
+
+    if (!agentId) {
+      return res.status(400).json({
+        error: "No Retell agent available for this number — assign a per-client agent, or set RETELL_LIVE_AGENT_ID on the server."
+      });
+    }
+
+    const sipCreds = await getTelnyxConnectionCredentials(numberRow.telnyx_number);
+
+    const retellNumber = await importPhoneNumberToRetellNative({
+      phoneNumber: numberRow.telnyx_number,
+      agentId,
+      nickname: `${client?.business_name || "client"} (letconvo)`,
+      sipCreds
+    });
+
+    return res.json({ success: true, retellNumber });
+  } catch (err) {
+    console.error("❌ Admin Retell-native migration error:", err.response?.data || err.message);
+    return res.status(500).json({ error: err.response?.data?.message || err.message });
   }
 });
 
