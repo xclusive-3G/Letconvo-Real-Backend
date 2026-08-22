@@ -146,7 +146,7 @@ import { telnyxKeepAliveAgent } from "../config/httpAgents.js";
 
 const router = express.Router();
 
-const MIN_START_CREDITS = 0; // block live/callback if client has this many credits or fewer
+const MIN_START_CREDITS = 0.1; // block live/callback if client has this many credits or fewer
 
 async function hangupCall(callControlId) {
   await axios.post(

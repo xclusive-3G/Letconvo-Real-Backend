@@ -2,13 +2,12 @@ import { supabase } from "../config/supabase.js";
 import { createNotification } from "../utils/createNotification.js";
 import { runAutoTopUp } from "./billing.js";
 
-const MIN_START_CREDITS = 0;
+const MIN_START_CREDITS = 0.1;
 
-// The hard-pause floor (MIN_START_CREDITS) is 0, so by the time a client
+// The hard-pause floor (MIN_START_CREDITS) is 0.1, so by the time a client
 // gets paused it's already too late to call it a "warning" — this is the
 // separate, earlier threshold that triggers a one-time "getting low"
-// email while the account is still fully active. Matches the value
-// MIN_START_CREDITS itself used before it was lowered to 0.
+// email while the account is still fully active.
 const LOW_CREDIT_WARNING_THRESHOLD = 100;
 
 // Flat per-message cost for any outbound SMS this app sends (missed-call

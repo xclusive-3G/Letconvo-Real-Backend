@@ -154,10 +154,10 @@ export async function processCallbackJob(recoveryId) {
   // MIN_CALL_CREDITS reservation was disabled by commenting out the amount
   // line, but the deduction call itself was left in place), which wrote
   // NaN into credits_remaining on every callback attempt.
-  // >= 1, not >= 0 — matches the inbound-call gates' <= 0 floor
-  // (telnyxVoiceWebhook2.js / retellInboundWebhook.js): a client at
-  // exactly 0 credits must not get a callback placed either.
-  const reserved = await hasEnoughCredits(recovery.clientId, 1);
+  // Matches the inbound-call gates' MIN_START_CREDITS floor
+  // (telnyxVoiceWebhook2.js / retellInboundWebhook.js / credit.js): a
+  // client at or below that floor must not get a callback placed either.
+  const reserved = await hasEnoughCredits(recovery.clientId, 0.1);
 
   if (!reserved) {
     await updateRecovery(recovery.id, {

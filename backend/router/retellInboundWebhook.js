@@ -5,7 +5,7 @@ import { findLatestBooking, formatDateHuman, formatTimeHuman, toHHMM, ACTIVE_STA
 const router = express.Router();
 
 // Same threshold telnyxVoiceWebhook2.js's live/callback gate uses.
-const MIN_START_CREDITS = 0;
+const MIN_START_CREDITS = 0.1;
 
 const formatHour = (h) => {
   const period = h >= 12 ? "PM" : "AM";
