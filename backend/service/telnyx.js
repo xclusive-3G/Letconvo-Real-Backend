@@ -1,5 +1,6 @@
 import axios from "axios";
 import { env } from "../config/config.js";
+import { telnyxKeepAliveAgent } from "../config/httpAgents.js";
 
 export async function sendMissedCallSms(to) {
   const text =
@@ -17,7 +18,8 @@ export async function sendMissedCallSms(to) {
         headers: {
           Authorization: `Bearer ${env.TELNYX_API_KEY}`,
           "Content-Type": "application/json"
-        }
+        },
+        httpsAgent: telnyxKeepAliveAgent
       }
     );
 
@@ -65,7 +67,8 @@ export async function transferCallToRetellSip({
         headers: {
           Authorization: `Bearer ${process.env.TELNYX_API_KEY}`,
           "Content-Type": "application/json"
-        }
+        },
+        httpsAgent: telnyxKeepAliveAgent
       }
     );
 

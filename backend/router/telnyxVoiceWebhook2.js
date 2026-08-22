@@ -142,6 +142,7 @@ import { logger } from "../utils/logger.js";
 import { supabase } from "../config/supabase.js";
 // import { createRetellLiveCall } from "../service/retell.js";
 import { transferCallToRetellSip } from "../service/telnyx.js";
+import { telnyxKeepAliveAgent } from "../config/httpAgents.js";
 
 const router = express.Router();
 
@@ -155,7 +156,8 @@ async function hangupCall(callControlId) {
       headers: {
         Authorization: `Bearer ${process.env.TELNYX_API_KEY}`,
         "Content-Type": "application/json"
-      }
+      },
+      httpsAgent: telnyxKeepAliveAgent
     }
   );
 }
