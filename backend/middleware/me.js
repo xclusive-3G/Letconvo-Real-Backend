@@ -10,6 +10,7 @@ import {
   formatTimeHuman
 } from "../utils/bookings.js";
 import { sendSms } from "../service/telnyx.js";
+import { hasEnoughCredits, deductCreditsAtomic, SMS_CREDIT_COST } from "../service/credit.js";
 // import {
 //   getLiveCalls
 // } from "../service/liveCalls.js";
@@ -457,9 +458,21 @@ router.post("/me/appointments/:id/send-reminder", requireAuth, async (req, res) 
     if (!appointment) return res.status(404).json({ error: "Appointment not found" });
     if (!appointment.customer_phone) return res.status(400).json({ error: "This appointment has no phone number on file" });
 
+    if (!(await hasEnoughCredits(client.id, SMS_CREDIT_COST))) {
+      return res.status(402).json({ error: "Not enough credits to send this SMS." });
+    }
+
     const text = `Reminder: your appointment with ${client.business_name || "us"} is on ${formatDateHuman(appointment.appointment_date)} at ${formatTimeHuman(appointment.appointment_time)}. Reply to this number if you need to reschedule.`;
 
     await sendSms(appointment.customer_phone, text);
+
+    // Charged only after the send actually succeeds — if sendSms above
+    // throws, we never reach here and the client isn't billed for it.
+    await deductCreditsAtomic({
+      clientId: client.id,
+      amount: SMS_CREDIT_COST,
+      description: `Appointment reminder SMS · ${appointment.customer_name || "customer"}`
+    });
 
     return res.json({ success: true });
   } catch (err) {

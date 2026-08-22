@@ -4,6 +4,12 @@ import { runAutoTopUp } from "./billing.js";
 
 const MIN_START_CREDITS = 0;
 
+// Flat per-message cost for any outbound SMS this app sends (missed-call
+// recovery, staff-initiated appointment reminders, etc.) — deliberately
+// simple/flat rather than duration-based like call billing, since SMS cost
+// doesn't vary the way call minutes do.
+export const SMS_CREDIT_COST = 1;
+
 export async function getClientByTelnyxNumber(telnyxNumber) {
   const { data, error } = await supabase
     .from("client_numbers")

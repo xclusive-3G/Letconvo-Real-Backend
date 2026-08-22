@@ -9,7 +9,7 @@ import {
 import { callbackQueue } from "../queue/callBackQueue.js";
 import { createRetellCallback } from "./retell.js";
 import { sendMissedCallSms } from "./telnyx.js";
-import { deductCreditsAtomic, pauseClientIfLowCredits } from "./credit.js";
+import { deductCreditsAtomic, pauseClientIfLowCredits, SMS_CREDIT_COST } from "./credit.js";
 import { isSmsNotifEnabled } from "../utils/createNotification.js";
 
 // const MIN_CALL_CREDITS = 5;
@@ -39,6 +39,15 @@ export async function triggerMissedCallRecovery(input) {
   try {
     if (await isSmsNotifEnabled(recovery.clientId)) {
       await sendMissedCallSms(recovery.callerPhone);
+
+      // Charged only after a successful send — a failed send (e.g. no
+      // alphanumeric sender ID registered for the destination country)
+      // falls through to the catch below and is never billed.
+      await deductCreditsAtomic({
+        clientId: recovery.clientId,
+        amount: SMS_CREDIT_COST,
+        description: "Missed-call recovery SMS"
+      });
 
       await updateRecovery(recovery.id, {
         smsSent: true,
