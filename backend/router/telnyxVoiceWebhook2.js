@@ -161,6 +161,58 @@ async function hangupCall(callControlId) {
   );
 }
 
+const formatHour = (h) => {
+  const period = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:00 ${period}`;
+};
+
+// SIP header values ride straight into the INVITE Telnyx sends Retell —
+// strip CR/LF so a business's own free-text settings can't inject extra
+// headers, and cap length since these are short signaling fields, not a
+// place for a whole paragraph.
+const sanitizeHeaderValue = (value, maxLen = 200) =>
+  String(value ?? "")
+    .replace(/[\r\n]/g, " ")
+    .trim()
+    .slice(0, maxLen);
+
+// Builds the X- headers that become the master agent's per-call dynamic
+// variables (see transferCallToRetellSip / the master prompt's
+// {{business_name}}, {{booking_fields}}, etc.). Only used for clients
+// riding the shared agent — a client with its own retell_agent_id
+// override doesn't need this.
+function buildRetellDynamicVariableHeaders(client, settings) {
+  const bookingFields = Array.isArray(settings?.booking_info_fields)
+    ? settings.booking_info_fields.join(", ")
+    : "";
+
+  // open_hour/close_hour are stored as "HH:MM" strings (from the signup
+  // form's <input type="time">), not plain integers — parseInt to match
+  // utils/bookings.js's getBusinessHours, which relies on the same thing.
+  const parsedOpen = parseInt(settings?.open_hour, 10);
+  const parsedClose = parseInt(settings?.close_hour, 10);
+  const openHour = formatHour(Number.isFinite(parsedOpen) ? parsedOpen : 9);
+  const closeHour = formatHour(Number.isFinite(parsedClose) ? parsedClose : 18);
+
+  // Retell turns an inbound "X-<name>" SIP header into a dynamic variable
+  // named exactly "<name>" (prefix stripped, nothing else transformed) —
+  // these header names are lowercase/underscored on purpose so they land
+  // as {{client_id}}, {{business_name}}, etc. in the master prompt/tools,
+  // not some re-cased variant.
+  return [
+    { name: "X-client_id", value: sanitizeHeaderValue(client.id, 64) },
+    { name: "X-business_name", value: sanitizeHeaderValue(client.business_name || "the business") },
+    { name: "X-business_type", value: sanitizeHeaderValue(settings?.businessType || "local business") },
+    { name: "X-greeting_message", value: sanitizeHeaderValue(settings?.greeting || "") },
+    { name: "X-open_hour", value: openHour },
+    { name: "X-close_hour", value: closeHour },
+    { name: "X-booking_fields", value: sanitizeHeaderValue(bookingFields || "Full Name, Phone Number") },
+    { name: "X-services_offered", value: sanitizeHeaderValue(settings?.services_offered || "not specified") },
+    { name: "X-booking_policies", value: sanitizeHeaderValue(settings?.booking_policies || "none specified") }
+  ];
+}
+
 router.post("/telnyx/voice", async (req, res) => {
   res.sendStatus(200);
 
@@ -235,19 +287,33 @@ if (mode === "live") {
 
   const { data: settings, error } = await supabase
     .from("client_settings")
-    .select("retell_agent_id")
+    .select("retell_agent_id, businessType, greeting, open_hour, close_hour, booking_info_fields, services_offered, booking_policies")
     .eq("client_id", client.id)
     .maybeSingle();
 
-  if (error || !settings?.retell_agent_id) {
-    console.log("❌ Missing Retell agent for client:", client.id);
+  if (error) {
+    console.log("❌ Failed to load client settings:", client.id, error.message);
+    await hangupCall(callControlId);
+    return;
+  }
+
+  // A per-client agent (hand-built by an admin) always wins if set — this
+  // keeps any already-configured client untouched. Everyone else (every
+  // new signup by default) rides the one shared master agent instead,
+  // personalized per call via SIP header -> dynamic variable injection
+  // (see transferCallToRetellSip) rather than a bespoke agent each.
+  const retellAgentId = settings?.retell_agent_id?.trim() || process.env.RETELL_LIVE_AGENT_ID;
+
+  if (!retellAgentId) {
+    console.log("❌ No Retell agent available (no per-client override and RETELL_LIVE_AGENT_ID unset) for client:", client.id);
     await hangupCall(callControlId);
     return;
   }
 
   await transferCallToRetellSip({
     callControlId,
-    retellAgentId: settings.retell_agent_id.trim()
+    retellAgentId,
+    customHeaders: buildRetellDynamicVariableHeaders(client, settings)
   });
 
   return;

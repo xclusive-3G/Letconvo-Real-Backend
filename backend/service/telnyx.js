@@ -44,7 +44,13 @@ export async function sendMissedCallSms(to) {
 // Do not add an answer step here; transfer directly.
 export async function transferCallToRetellSip({
   callControlId,
-  retellAgentId
+  retellAgentId,
+  // [{ name, value }] — becomes SIP INVITE headers. Retell auto-converts
+  // any inbound X-/x- prefixed header into a dynamic variable (stripping
+  // the prefix), which is how a single shared agent gets per-client
+  // context on this SIP-transfer path (its REST API's own
+  // retell_llm_dynamic_variables param has no equivalent here).
+  customHeaders
 }) {
   const sipUri = `sip:${retellAgentId}@sip.retellai.com`;
 
@@ -52,7 +58,8 @@ export async function transferCallToRetellSip({
     const response = await axios.post(
       `https://api.telnyx.com/v2/calls/${callControlId}/actions/transfer`,
       {
-        to: sipUri
+        to: sipUri,
+        ...(customHeaders?.length ? { custom_headers: customHeaders } : {})
       },
       {
         headers: {
