@@ -157,7 +157,10 @@ export async function processCallbackJob(recoveryId) {
   // Matches the inbound-call gates' MIN_START_CREDITS floor
   // (telnyxVoiceWebhook2.js / retellInboundWebhook.js / credit.js): a
   // client at or below that floor must not get a callback placed either.
-  const reserved = await hasEnoughCredits(recovery.clientId, 0.1);
+  // hasEnoughCredits uses >=, while the other two gates use <=, so the
+  // required amount here is one above the floor to block the same
+  // boundary value (exactly 30) that they block.
+  const reserved = await hasEnoughCredits(recovery.clientId, 31);
 
   if (!reserved) {
     await updateRecovery(recovery.id, {

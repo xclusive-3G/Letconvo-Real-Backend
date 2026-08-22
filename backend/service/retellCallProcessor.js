@@ -4,7 +4,7 @@ import { deductCreditsAtomic, pauseClientIfLowCredits } from "./credit.js";
 import { createNotification } from "../utils/createNotification.js";
 
 const MIN_CALL_CREDITS = 1;
-const MIN_START_CREDITS = 0.1;
+const MIN_START_CREDITS = 30; // 1 minute of call time at CREDITS_PER_SECOND below
 const CREDITS_PER_SECOND = 0.5;
 
 // 1 credit = $0.01 (100 credits per dollar) — anchored to the plans table

@@ -2,9 +2,14 @@ import { supabase } from "../config/supabase.js";
 import { createNotification } from "../utils/createNotification.js";
 import { runAutoTopUp } from "./billing.js";
 
-const MIN_START_CREDITS = 0.1;
+// 30 credits = 1 minute of call time (CREDITS_PER_SECOND = 0.5 in
+// retellCallProcessor.js) — a client with less than a full minute's worth
+// of credits left can't realistically complete a call anyway, so block
+// before Retell/Telnyx even pick up rather than let it start and go
+// negative immediately.
+const MIN_START_CREDITS = 30;
 
-// The hard-pause floor (MIN_START_CREDITS) is 0.1, so by the time a client
+// The hard-pause floor (MIN_START_CREDITS) is 30, so by the time a client
 // gets paused it's already too late to call it a "warning" — this is the
 // separate, earlier threshold that triggers a one-time "getting low"
 // email while the account is still fully active.
