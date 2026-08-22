@@ -6,6 +6,7 @@ import webhookRetellRouter from "./router/webhookRetell.js";
 import retellBookingRouter from "./router/retellBooking.js";
 import retellUpdateBookingRouter from "./router/retellUpdateBooking.js";
 import telnyxVoiceWebhook from "./router/telnyxVoiceWebhook2.js";
+import retellInboundWebhook from "./router/retellInboundWebhook.js";
 import telnyxMessagingWebhook from "./router/telnyxMessagingWebhook2.js";
 import healthRouter from "./router/health.js";
 import onboardingRoutes from "./router/onboarding.js"
@@ -58,6 +59,7 @@ app.use("/",getSlotsRouter);
 
 // ==================================
 app.use("/webhooks", telnyxVoiceWebhook);
+app.use("/", retellInboundWebhook);
 app.use("/webhooks", telnyxMessagingWebhook);
 app.use('/', healthRouter);
 app.use("/api", onboardingRoutes);
