@@ -17,7 +17,13 @@ router.post("/retell/update-booking", async (req, res) => {
   // Same schema-drift issue as book_appointment/get_existing_booking — the
   // LLM sometimes sends alternate field names instead of the declared ones.
   const phone = req.body.phone || req.body.phone_number;
-  const status = req.body.status;
+  // "work test" (an earlier hand-built Retell agent) declares its status
+  // enum as reschedule_requested/confirmed/cancelled rather than this
+  // table's actual rescheduled/confirmed/... statuses — normalize so an
+  // agent built against either wording still lands on a valid status.
+  const STATUS_ALIASES = { reschedule_requested: "rescheduled" };
+  const rawStatus = req.body.status;
+  const status = STATUS_ALIASES[rawStatus] || rawStatus;
   const newDate = req.body.newDate || req.body.new_date || req.body.date;
   const newTime = req.body.newTime || req.body.new_time || req.body.time;
 
