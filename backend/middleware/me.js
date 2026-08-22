@@ -5,8 +5,11 @@ import { reconcileClientCalls } from "../service/retellReconciliation.js";
 import {
   ACTIVE_STATUSES,
   scheduleAppointmentReminder,
-  cancelAppointmentReminder
+  cancelAppointmentReminder,
+  formatDateHuman,
+  formatTimeHuman
 } from "../utils/bookings.js";
+import { sendSms } from "../service/telnyx.js";
 // import {
 //   getLiveCalls
 // } from "../service/liveCalls.js";
@@ -431,6 +434,36 @@ router.patch("/me/appointments/:id", requireAuth, async (req, res) => {
     return res.json({ success: true, appointment: data });
   } catch (err) {
     console.error("❌ Update appointment error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Staff-initiated, on-demand SMS reminder — separate from the automatic
+// reminder call scheduled ~20 minutes before the appointment
+// (scheduleAppointmentReminder), which is a Retell phone call, not an SMS.
+router.post("/me/appointments/:id/send-reminder", requireAuth, async (req, res) => {
+  try {
+    const client = await getClientByUserId(req.user.id, "id, business_name");
+    const { id } = req.params;
+
+    const { data: appointment, error } = await supabase
+      .from("bookings")
+      .select("*")
+      .eq("id", id)
+      .eq("client_id", client.id)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!appointment) return res.status(404).json({ error: "Appointment not found" });
+    if (!appointment.customer_phone) return res.status(400).json({ error: "This appointment has no phone number on file" });
+
+    const text = `Reminder: your appointment with ${client.business_name || "us"} is on ${formatDateHuman(appointment.appointment_date)} at ${formatTimeHuman(appointment.appointment_time)}. Reply to this number if you need to reschedule.`;
+
+    await sendSms(appointment.customer_phone, text);
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("❌ Send reminder SMS error:", err);
     return res.status(500).json({ error: err.message });
   }
 });
