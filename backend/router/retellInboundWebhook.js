@@ -1,6 +1,6 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
-import { findLatestBooking, formatDateHuman, formatTimeHuman } from "../utils/bookings.js";
+import { findLatestBooking, formatDateHuman, formatTimeHuman, toHHMM, ACTIVE_STATUSES } from "../utils/bookings.js";
 
 const router = express.Router();
 
@@ -120,6 +120,19 @@ router.post("/webhooks/retell/inbound-call", async (req, res) => {
       }
     }
 
+    // A booking that's already in the past (or cancelled/completed) isn't
+    // something to offer "reschedule or cancel" for — that only makes
+    // sense while it's still upcoming. Computed here rather than trusting
+    // the LLM to reason about dates correctly mid-call.
+    let bookingIsUpcoming = false;
+    if (existingBooking) {
+      const apptDateTime = new Date(`${existingBooking.appointment_date}T${toHHMM(existingBooking.appointment_time)}:00`);
+      bookingIsUpcoming =
+        !Number.isNaN(apptDateTime.getTime()) &&
+        apptDateTime.getTime() > Date.now() &&
+        ACTIVE_STATUSES.includes(existingBooking.status);
+    }
+
     return res.json({
       call_inbound: {
         override_agent_id: agentId,
@@ -134,6 +147,7 @@ router.post("/webhooks/retell/inbound-call", async (req, res) => {
           services_offered: settings?.services_offered || "not specified",
           booking_policies: settings?.booking_policies || "none specified",
           has_existing_booking: existingBooking ? "yes" : "no",
+          booking_is_upcoming: bookingIsUpcoming ? "yes" : "no",
           existing_booking_summary: existingBooking
             ? `${existingBooking.customer_name || "Caller"}, ${existingBooking.service || "an appointment"} on ${formatDateHuman(existingBooking.appointment_date)} at ${formatTimeHuman(existingBooking.appointment_time)}, currently ${existingBooking.status}.`
             : "none"
