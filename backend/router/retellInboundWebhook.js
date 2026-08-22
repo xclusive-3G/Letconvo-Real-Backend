@@ -1,5 +1,6 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
+import { findLatestBooking, formatDateHuman, formatTimeHuman } from "../utils/bookings.js";
 
 const router = express.Router();
 
@@ -102,6 +103,23 @@ router.post("/webhooks/retell/inbound-call", async (req, res) => {
     const parsedOpen = parseInt(settings?.open_hour, 10);
     const parsedClose = parseInt(settings?.close_hour, 10);
 
+    // Looked up here — deterministically, before the call is even answered
+    // — rather than leaving "does this caller already have a booking?" to
+    // the LLM remembering to call get_booking/check_backend first. Real
+    // calls showed the model sometimes skips that instruction entirely and
+    // just guesses/hallucinates an answer instead of calling the tool, so
+    // this can no longer depend on the LLM choosing to look it up.
+    const fromNumber = req.body?.call_inbound?.from_number;
+    let existingBooking = null;
+
+    if (fromNumber) {
+      try {
+        existingBooking = await findLatestBooking(client.id, fromNumber);
+      } catch (bookingErr) {
+        console.log("⚠️ Retell inbound webhook: booking lookup failed, continuing without it", bookingErr.message);
+      }
+    }
+
     return res.json({
       call_inbound: {
         override_agent_id: agentId,
@@ -114,7 +132,11 @@ router.post("/webhooks/retell/inbound-call", async (req, res) => {
           close_hour: formatHour(Number.isFinite(parsedClose) ? parsedClose : 18),
           booking_fields: bookingFields,
           services_offered: settings?.services_offered || "not specified",
-          booking_policies: settings?.booking_policies || "none specified"
+          booking_policies: settings?.booking_policies || "none specified",
+          has_existing_booking: existingBooking ? "yes" : "no",
+          existing_booking_summary: existingBooking
+            ? `${existingBooking.customer_name || "Caller"}, ${existingBooking.service || "an appointment"} on ${formatDateHuman(existingBooking.appointment_date)} at ${formatTimeHuman(existingBooking.appointment_time)}, currently ${existingBooking.status}.`
+            : "none"
         }
       }
     });
