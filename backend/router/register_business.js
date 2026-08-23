@@ -25,6 +25,7 @@ router.post("/register-business", async (req, res) => {
       businessPhone,
       businessEmail,
       businessAddress,
+      websiteUrl,
       receptionistMode,
       greetingMessage,
       openTime,
@@ -55,6 +56,18 @@ router.post("/register-business", async (req, res) => {
     if (!Array.isArray(workingDays) || workingDays.length === 0) {
       return res.status(400).json({ error: "At least one working day is required" });
     }
+
+    // Loose "looks like a domain" check (e.g. "apexhealth.com",
+    // "https://apexhealth.com") rather than a strict URL parse — signups
+    // paste this in all sorts of forms, and this is reference material for
+    // hand-building the client's prompt, not something the backend fetches.
+    const trimmedWebsiteUrl = String(websiteUrl || "").trim();
+    if (!/^(https?:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/i.test(trimmedWebsiteUrl)) {
+      return res.status(400).json({ error: "A valid website URL is required" });
+    }
+    const normalizedWebsiteUrl = /^https?:\/\//i.test(trimmedWebsiteUrl)
+      ? trimmedWebsiteUrl
+      : `https://${trimmedWebsiteUrl}`;
 
     // A Google (or other OAuth) sign-in already creates the Supabase auth
     // user before this endpoint is ever called — GetStartedPage sends that
@@ -198,6 +211,7 @@ router.post("/register-business", async (req, res) => {
         working_days: Array.isArray(workingDays) && workingDays.length
           ? workingDays
           : ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+        website_url: normalizedWebsiteUrl,
         businessType,
         email: ownerEmail || oauthUser?.email,
         plan,
