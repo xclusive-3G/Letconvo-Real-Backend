@@ -56,7 +56,8 @@ router.post("/webhooks/retell/inbound-call", async (req, res) => {
             working_days,
             booking_info_fields,
             services_offered,
-            booking_policies
+            booking_policies,
+            website_info
           )
         )
       `)
@@ -156,6 +157,7 @@ router.post("/webhooks/retell/inbound-call", async (req, res) => {
           booking_fields: bookingFields,
           services_offered: settings?.services_offered || "not specified",
           booking_policies: settings?.booking_policies || "none specified",
+          website_info: settings?.website_info || "not available",
           has_existing_booking: existingBooking ? "yes" : "no",
           booking_is_upcoming: bookingIsUpcoming ? "yes" : "no",
           existing_booking_summary: existingBooking

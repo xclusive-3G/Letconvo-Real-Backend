@@ -221,7 +221,8 @@ function buildRetellDynamicVariableHeaders(client, settings) {
     },
     { name: "X-booking_fields", value: sanitizeHeaderValue(bookingFields || "Full Name, Phone Number") },
     { name: "X-services_offered", value: sanitizeHeaderValue(settings?.services_offered || "not specified") },
-    { name: "X-booking_policies", value: sanitizeHeaderValue(settings?.booking_policies || "none specified") }
+    { name: "X-booking_policies", value: sanitizeHeaderValue(settings?.booking_policies || "none specified") },
+    { name: "X-website_info", value: sanitizeHeaderValue(settings?.website_info || "not available", 500) }
   ];
 }
 
@@ -293,7 +294,8 @@ router.post("/telnyx/voice", async (req, res) => {
             working_days,
             booking_info_fields,
             services_offered,
-            booking_policies
+            booking_policies,
+            website_info
           )
         )
       `)

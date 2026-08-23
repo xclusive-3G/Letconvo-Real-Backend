@@ -1,6 +1,7 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
 import { sendEmail } from "../utils/email.js";
+import { populateWebsiteInfo } from "../service/websiteInfo.js";
 
 const router = express.Router();
 
@@ -225,6 +226,12 @@ router.post("/register-business", async (req, res) => {
       });
 
     if (settingsError) throw settingsError;
+
+    // Not awaited on purpose — fetching+scraping the site can take several
+    // seconds and shouldn't hold up the signup response. Fully self-
+    // contained (populateWebsiteInfo never throws), fills in
+    // client_settings.website_info once it's done.
+    populateWebsiteInfo(supabase, client.id, normalizedWebsiteUrl);
 
     // // 5. Assign demo Telnyx number
     // const telnyxNumber = NULL;

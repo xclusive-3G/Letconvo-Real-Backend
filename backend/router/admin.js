@@ -5,6 +5,7 @@ import { activateClientIfEnoughCredits } from "../service/credit.js";
 import { createNotification } from "../utils/createNotification.js";
 import { getTelnyxConnectionCredentials } from "../service/telnyx.js";
 import { importPhoneNumberToRetellNative } from "../service/retell.js";
+import { fetchWebsiteInfo } from "../service/websiteInfo.js";
 
 const router = express.Router();
 
@@ -400,6 +401,45 @@ router.put("/companies/:clientId/phone-number", requireAdmin, async (req, res) =
     return res.json({ success: true, number });
   } catch (err) {
     console.error("❌ Admin phone number assignment error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// The signup-time fetch (register_business.js) is fire-and-forget and
+// never retried — this lets an admin re-run it (site was down, changed
+// since signup, etc.) instead of the client being stuck with a blank
+// website_info forever.
+router.post("/companies/:clientId/refresh-website-info", requireAdmin, async (req, res) => {
+  try {
+    const { clientId } = req.params;
+
+    const { data: settings, error: settingsError } = await supabase
+      .from("client_settings")
+      .select("website_url")
+      .eq("client_id", clientId)
+      .maybeSingle();
+
+    if (settingsError) throw settingsError;
+    if (!settings?.website_url) {
+      return res.status(400).json({ error: "This client has no website_url set" });
+    }
+
+    const info = await fetchWebsiteInfo(settings.website_url);
+
+    if (!info) {
+      return res.status(502).json({ error: "Fetched the site but couldn't extract any text from it" });
+    }
+
+    const { error: updateError } = await supabase
+      .from("client_settings")
+      .update({ website_info: info })
+      .eq("client_id", clientId);
+
+    if (updateError) throw updateError;
+
+    return res.json({ success: true, length: info.length });
+  } catch (err) {
+    console.error("❌ Admin refresh-website-info error:", err);
     return res.status(500).json({ error: err.message });
   }
 });
