@@ -28,6 +28,13 @@ router.get("/stats", requireAdmin, async (req, res) => {
 
     if (error) throw error;
 
+    const { count: unreadMessages, error: unreadError } = await supabase
+      .from("contact_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("read", false);
+
+    if (unreadError) throw unreadError;
+
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
 
     return res.json({
@@ -37,11 +44,44 @@ router.get("/stats", requireAdmin, async (req, res) => {
         activeCompanies: clients.filter((c) => c.status === "active").length,
         pausedCompanies: clients.filter((c) => c.status === "paused").length,
         totalCreditsOutstanding: clients.reduce((sum, c) => sum + Number(c.credits_remaining || 0), 0),
-        newSignups48h: clients.filter((c) => c.created_at >= fortyEightHoursAgo).length
+        newSignups48h: clients.filter((c) => c.created_at >= fortyEightHoursAgo).length,
+        unreadMessages: unreadMessages || 0
       }
     });
   } catch (err) {
     console.error("❌ Admin stats error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/contact-messages", requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("contact_messages")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    return res.json({ success: true, messages: data });
+  } catch (err) {
+    console.error("❌ Admin contact-messages list error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch("/contact-messages/:id/read", requireAdmin, async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from("contact_messages")
+      .update({ read: true })
+      .eq("id", req.params.id);
+
+    if (error) throw error;
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("❌ Admin contact-message mark-read error:", err);
     return res.status(500).json({ error: err.message });
   }
 });

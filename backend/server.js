@@ -21,6 +21,7 @@ import googleAuthBooking from "./router/googleAuth.js";
 import billingRouter from "./router/billing.js";
 import paystackWebhookRouter from "./router/paystackWebhook.js";
 import adminRouter from "./router/admin.js";
+import contactRouter from "./router/contact.js";
 
 
 import callHistory from "./router/callHistory.js";
@@ -72,6 +73,7 @@ app.use("/api", meRoutes);
 app.use("/api", googleAuthBooking);
 app.use("/api", billingRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api", contactRouter);
 // app.use("/api", callsRoutes);
 // app.use("/api", callHistory);
 
