@@ -16,14 +16,21 @@ export const BOOKING_STATUSES = [
 // Statuses that count as "the slot is taken" when checking availability.
 export const ACTIVE_STATUSES = ["pending", "confirmed", "rescheduled"];
 
+// Index matches JS Date.getDay() (0 = Sunday .. 6 = Saturday), so a
+// client's stored day names can be turned straight into a lookup set
+// against cursor.getDay() in retellGetSlot.js's slot loop.
+export const DAYS_OF_WEEK = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+const DEFAULT_WORKING_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
 /**
- * Pulls the business's open/close hour from client_settings.
- * Falls back to 9am-6pm if the client hasn't configured hours.
+ * Pulls the business's open/close hour and working days from client_settings.
+ * Falls back to 9am-6pm, Monday-Saturday if the client hasn't configured them.
  */
 export async function getBusinessHours(clientId) {
   const { data, error } = await supabase
     .from("client_settings")
-    .select("open_hour, close_hour")
+    .select("open_hour, close_hour, working_days")
     .eq("client_id", clientId)
     .maybeSingle();
 
@@ -33,11 +40,31 @@ export async function getBusinessHours(clientId) {
 
   const openHour = parseInt(data?.open_hour, 10);
   const closeHour = parseInt(data?.close_hour, 10);
+  const workingDays = Array.isArray(data?.working_days) && data.working_days.length
+    ? data.working_days
+    : DEFAULT_WORKING_DAYS;
 
   return {
     openHour: Number.isFinite(openHour) ? openHour : 9,
-    closeHour: Number.isFinite(closeHour) ? closeHour : 18
+    closeHour: Number.isFinite(closeHour) ? closeHour : 18,
+    workingDays
   };
+}
+
+// Turns a client's stored day names into a Set of JS Date.getDay() indices
+// for quick "is this cursor date open?" lookups.
+export function workingDaySet(workingDays) {
+  return new Set(
+    (workingDays || []).map((d) => DAYS_OF_WEEK.indexOf(d)).filter((i) => i >= 0)
+  );
+}
+
+// Human sentence fragment for the get-business-hours tool, e.g.
+// "Monday, Tuesday, Wednesday, Thursday, Friday, Saturday" or "every day".
+export function formatWorkingDaysText(workingDays) {
+  if (!workingDays || !workingDays.length) return "not specified";
+  if (workingDays.length === 7) return "every day";
+  return workingDays.join(", ");
 }
 
 // Normalizes a phone number so "+234...", "234...", and "0234..." style

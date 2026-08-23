@@ -143,6 +143,7 @@ import { supabase } from "../config/supabase.js";
 // import { createRetellLiveCall } from "../service/retell.js";
 import { transferCallToRetellSip, warmTelnyxConnection } from "../service/telnyx.js";
 import { telnyxKeepAliveAgent } from "../config/httpAgents.js";
+import { formatWorkingDaysText } from "../utils/bookings.js";
 
 const router = express.Router();
 
@@ -208,6 +209,16 @@ function buildRetellDynamicVariableHeaders(client, settings) {
     { name: "X-greeting_message", value: sanitizeHeaderValue(settings?.greeting || "") },
     { name: "X-open_hour", value: openHour },
     { name: "X-close_hour", value: closeHour },
+    {
+      name: "X-working_days",
+      value: sanitizeHeaderValue(
+        formatWorkingDaysText(
+          Array.isArray(settings?.working_days) && settings.working_days.length
+            ? settings.working_days
+            : ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+        )
+      )
+    },
     { name: "X-booking_fields", value: sanitizeHeaderValue(bookingFields || "Full Name, Phone Number") },
     { name: "X-services_offered", value: sanitizeHeaderValue(settings?.services_offered || "not specified") },
     { name: "X-booking_policies", value: sanitizeHeaderValue(settings?.booking_policies || "none specified") }
@@ -279,6 +290,7 @@ router.post("/telnyx/voice", async (req, res) => {
             greeting,
             open_hour,
             close_hour,
+            working_days,
             booking_info_fields,
             services_offered,
             booking_policies

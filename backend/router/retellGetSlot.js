@@ -1,6 +1,6 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
-import { getBusinessHours, ACTIVE_STATUSES, resolveRetellClientId } from "../utils/bookings.js";
+import { getBusinessHours, workingDaySet, formatWorkingDaysText, ACTIVE_STATUSES, resolveRetellClientId } from "../utils/bookings.js";
 
 const router = express.Router();
 
@@ -20,7 +20,8 @@ router.post("/retell/get-slots", async (req, res) => {
     const windowDays = Number(days) > 0 ? Number(days) : 7;
     const windowEnd = new Date(now.getTime() + windowDays * 24 * 60 * 60 * 1000);
 
-    const { openHour, closeHour } = await getBusinessHours(clientId);
+    const { openHour, closeHour, workingDays } = await getBusinessHours(clientId);
+    const openDays = workingDaySet(workingDays);
 
     const todayStr = now.toISOString().slice(0, 10);
     const endStr = windowEnd.toISOString().slice(0, 10);
@@ -42,7 +43,8 @@ router.post("/retell/get-slots", async (req, res) => {
       )
     );
 
-    // Build available slots, one per hour, within business hours, skipping Sundays.
+    // Build available slots, one per hour, within business hours, skipping
+    // any day not in the client's configured working days.
     const slots = [];
     const cursor = new Date(now);
     cursor.setMinutes(0, 0, 0);
@@ -52,7 +54,7 @@ router.post("/retell/get-slots", async (req, res) => {
       const day = cursor.getDay();
       const hour = cursor.getHours();
 
-      if (day !== 0 && hour >= openHour && hour < closeHour) {
+      if (openDays.has(day) && hour >= openHour && hour < closeHour) {
         const dateStr = cursor.toISOString().slice(0, 10);
         const timeStr = `${String(hour).padStart(2, "0")}:00`;
         const key = `${dateStr}T${timeStr}`;
@@ -105,13 +107,13 @@ router.post("/retell/get-business-hours", async (req, res) => {
       return res.status(400).json({ error: "clientId is required" });
     }
 
-    const { openHour, closeHour } = await getBusinessHours(clientId);
+    const { openHour, closeHour, workingDays } = await getBusinessHours(clientId);
 
     return res.json({
       openHour,
       closeHour,
-      // Matches get-slots' own Sunday-closed assumption above.
-      hoursText: `We're open from ${formatHour(openHour)} to ${formatHour(closeHour)}, Monday through Saturday. We're closed on Sundays.`
+      workingDays,
+      hoursText: `We're open from ${formatHour(openHour)} to ${formatHour(closeHour)} on ${formatWorkingDaysText(workingDays)}.`
     });
   } catch (err) {
     console.error("❌ get-business-hours error:", err);

@@ -29,6 +29,7 @@ router.post("/register-business", async (req, res) => {
       greetingMessage,
       openTime,
       closeTime,
+      workingDays,
       bookingFields,
       servicesOffered,
       bookingPolicies,
@@ -183,6 +184,9 @@ router.post("/register-business", async (req, res) => {
         businessAddress,
         open_hour: openTime,
         close_hour: closeTime,
+        working_days: Array.isArray(workingDays) && workingDays.length
+          ? workingDays
+          : ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
         businessType,
         email: ownerEmail || oauthUser?.email,
         plan,

@@ -1,6 +1,6 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
-import { findLatestBooking, formatDateHuman, formatTimeHuman, toHHMM, ACTIVE_STATUSES } from "../utils/bookings.js";
+import { findLatestBooking, formatDateHuman, formatTimeHuman, toHHMM, ACTIVE_STATUSES, formatWorkingDaysText } from "../utils/bookings.js";
 
 const router = express.Router();
 
@@ -53,6 +53,7 @@ router.post("/webhooks/retell/inbound-call", async (req, res) => {
             greeting,
             open_hour,
             close_hour,
+            working_days,
             booking_info_fields,
             services_offered,
             booking_policies
@@ -147,6 +148,11 @@ router.post("/webhooks/retell/inbound-call", async (req, res) => {
           greeting_message: settings?.greeting || "",
           open_hour: formatHour(Number.isFinite(parsedOpen) ? parsedOpen : 9),
           close_hour: formatHour(Number.isFinite(parsedClose) ? parsedClose : 18),
+          working_days: formatWorkingDaysText(
+            Array.isArray(settings?.working_days) && settings.working_days.length
+              ? settings.working_days
+              : ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+          ),
           booking_fields: bookingFields,
           services_offered: settings?.services_offered || "not specified",
           booking_policies: settings?.booking_policies || "none specified",
