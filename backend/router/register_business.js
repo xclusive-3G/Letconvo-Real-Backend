@@ -45,6 +45,17 @@ router.post("/register-business", async (req, res) => {
       });
     }
 
+    // GetStartedPage marks these required client-side (so the AI has real
+    // schedule data instead of guessing), but that's UX only — /register-business
+    // can be hit directly, so enforce it here too.
+    if (!openTime || !closeTime) {
+      return res.status(400).json({ error: "Working hours are required" });
+    }
+
+    if (!Array.isArray(workingDays) || workingDays.length === 0) {
+      return res.status(400).json({ error: "At least one working day is required" });
+    }
+
     // A Google (or other OAuth) sign-in already creates the Supabase auth
     // user before this endpoint is ever called — GetStartedPage sends that
     // session's access token instead of a password in that case.
