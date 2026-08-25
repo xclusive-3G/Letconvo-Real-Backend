@@ -1,0 +1,321 @@
+import { supabase } from "../config/supabase.js";
+import { createNotification } from "../utils/createNotification.js";
+import { runAutoTopUp } from "./billing.js";
+
+// 30 credits = 1 minute of call time (CREDITS_PER_SECOND = 0.5 in
+// retellCallProcessor.js) — a client with less than a full minute's worth
+// of credits left can't realistically complete a call anyway, so block
+// before Retell/Telnyx even pick up rather than let it start and go
+// negative immediately.
+const MIN_START_CREDITS = 30;
+
+// The hard-pause floor (MIN_START_CREDITS) is 30, so by the time a client
+// gets paused it's already too late to call it a "warning" — this is the
+// separate, earlier threshold that triggers a one-time "getting low"
+// email while the account is still fully active.
+const LOW_CREDIT_WARNING_THRESHOLD = 100;
+
+// Flat per-message cost for any outbound SMS this app sends (missed-call
+// recovery, staff-initiated appointment reminders, etc.) — deliberately
+// simple/flat rather than duration-based like call billing, since SMS cost
+// doesn't vary the way call minutes do.
+export const SMS_CREDIT_COST = 1;
+
+export async function getClientByTelnyxNumber(telnyxNumber) {
+  const { data, error } = await supabase
+    .from("client_numbers")
+    .select(`
+      id,
+      telnyx_number,
+      client:clients (
+        id,
+        business_name,
+        credits_remaining,
+        status,
+        receptionist_mode,
+        plan_id
+      )
+    `)
+    .eq("telnyx_number", telnyxNumber)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  return data?.client || null;
+}
+
+export async function getClient(clientId) {
+  const { data, error } = await supabase
+    .from("clients")
+    .select("*")
+    .eq("id", clientId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function hasEnoughCredits(clientId, requiredCredits) {
+  const client = await getClient(clientId);
+
+  if (!client) return false;
+  if (client.status !== "active") return false;
+
+  return Number(client.credits_remaining || 0) >= requiredCredits;
+}
+
+export async function deductCreditsAtomic({
+  clientId,
+  amount,
+  description,
+  callCost = null,
+  callDuration = null
+}) {
+  const { data: client, error: fetchError } = await supabase
+    .from("clients")
+    .select("id, business_name, credits_remaining, status")
+    .eq("id", clientId)
+    .single();
+
+  if (fetchError) throw fetchError;
+
+  const currentCredits = Number(client.credits_remaining || 0);
+
+  if (currentCredits < amount) {
+    console.log("❌ Not enough credits");
+
+    await pauseClientIfLowCredits(clientId, MIN_START_CREDITS);
+
+    return false;
+  }
+
+  const newBalance = currentCredits - amount;
+
+  const { error: updateError } = await supabase
+    .from("clients")
+    .update({ credits_remaining: newBalance })
+    .eq("id", clientId);
+
+  if (updateError) throw updateError;
+
+  const { error: txError } = await supabase
+    .from("credit_transactions")
+    .insert({
+      client_id: clientId,
+      amount,
+      type: "debit",
+      description,
+      call_cost: callCost,
+      call_duration: callDuration
+    });
+
+  if (txError) throw txError;
+
+  console.log("💳 Credits deducted:", {
+    amount,
+    oldBalance: currentCredits,
+    newBalance
+  });
+
+  await pauseClientIfLowCredits(clientId, MIN_START_CREDITS);
+
+  return true;
+}
+
+export async function deductCredits({
+  clientId,
+  recoveryId,
+  amount,
+  description
+}) {
+  console.warn("⚠️ Using NON-ATOMIC deduction. Use deductCreditsAtomic in production.");
+
+  const client = await getClient(clientId);
+
+  if (!client) {
+    throw new Error("Client not found");
+  }
+
+  const currentCredits = Number(client.credits_remaining || 0);
+
+  if (currentCredits < amount) {
+    await pauseClientIfLowCredits(clientId, MIN_START_CREDITS);
+    throw new Error("Insufficient credits");
+  }
+
+  const newBalance = currentCredits - amount;
+
+  const { error: updateError } = await supabase
+    .from("clients")
+    .update({ credits_remaining: newBalance })
+    .eq("id", clientId);
+
+  if (updateError) throw updateError;
+
+  const { error: txError } = await supabase
+    .from("credit_transactions")
+    .insert({
+      client_id: clientId,
+      recovery_id: recoveryId,
+      type: "debit",
+      amount,
+      description
+    });
+
+  if (txError) throw txError;
+
+  await pauseClientIfLowCredits(clientId, MIN_START_CREDITS);
+
+  return newBalance;
+}
+
+export async function pauseClientIfLowCredits(clientId, minimumCredits = 0) {
+  const { data: client, error: fetchError } = await supabase
+    .from("clients")
+    .select(
+      "id, business_name, credits_remaining, status, email, ownerEmail, auto_topup, auto_topup_threshold, auto_topup_amount, paystack_authorization_code, low_credit_warned"
+    )
+    .eq("id", clientId)
+    .single();
+
+  if (fetchError) throw fetchError;
+
+  const credits = Number(client.credits_remaining || 0);
+
+  // Auto top-up runs off the client's own threshold, independent of
+  // minimumCredits (the hard pause floor) — it's meant to top the balance
+  // up before a client ever gets close to being paused.
+  if (client.auto_topup && credits <= Number(client.auto_topup_threshold ?? 0)) {
+    const toppedUp = await runAutoTopUp(client);
+
+    if (toppedUp) {
+      // Balance just went back up — clear the warning flag so a future
+      // dip below the threshold warns again instead of staying silent.
+      if (client.low_credit_warned) {
+        await supabase.from("clients").update({ low_credit_warned: false }).eq("id", clientId);
+      }
+
+      const { data: refreshed, error: refreshError } = await supabase
+        .from("clients")
+        .select("id, business_name, credits_remaining, status")
+        .eq("id", clientId)
+        .single();
+
+      if (refreshError) throw refreshError;
+      return refreshed;
+    }
+  }
+
+  if (credits <= minimumCredits && client.status !== "paused") {
+    const { data, error } = await supabase
+      .from("clients")
+      .update({ status: "paused" })
+      .eq("id", clientId)
+      .select("id, business_name, credits_remaining, status")
+      .single();
+
+    if (error) throw error;
+
+    console.log("⏸️ CLIENT AUTO-PAUSED:", {
+      clientId: data.id,
+      businessName: data.business_name,
+      credits: data.credits_remaining,
+      status: data.status
+    });
+
+    await createNotification({
+      clientId: data.id,
+      title: "Low credit balance",
+      message: `Your account has been paused — only ${data.credits_remaining} credits remaining. Please top up to resume service.`,
+      type: "alert",
+      email: true,
+      emailOverride: {
+        // Subject line intentionally has no emoji/exclamation stacking —
+        // keeps it out of common spam-filter heuristics. The heading
+        // inside the opened email is where the ⚠️ actually shows.
+        subject: "Low Credit Balance",
+        title: "⚠️ Low Credit Balance",
+        paragraphs: [
+          "Your LetConvo credit balance is running low and may affect your AI receptionist, calls, messages, and automations.",
+          "To avoid service interruptions, please recharge your account as soon as possible."
+        ],
+        highlight: { label: "Current Balance", value: `${data.credits_remaining} credits` },
+        preCta: "👉 Recharge now to keep your AI assistant running smoothly.",
+        ctaLabel: "Recharge Now"
+      }
+    });
+
+    return data;
+  }
+
+  // One-time "getting low" email, well before the hard-pause floor — the
+  // pause email above only fires once service has already stopped, which
+  // isn't a warning so much as an obituary. low_credit_warned makes this
+  // fire once per dip below the threshold, not on every deduction while
+  // already low (cleared above once the balance recovers).
+  if (credits > minimumCredits && credits <= LOW_CREDIT_WARNING_THRESHOLD && !client.low_credit_warned) {
+    await supabase.from("clients").update({ low_credit_warned: true }).eq("id", clientId);
+
+    await createNotification({
+      clientId: client.id,
+      title: "Credit balance getting low",
+      message: `Your credit balance is getting low — ${credits} credits remaining. Top up soon to avoid an interruption.`,
+      type: "alert",
+      email: true,
+      emailOverride: {
+        subject: "Your Letconvo credit balance is getting low",
+        title: "⚠️ Credit balance getting low",
+        paragraphs: [
+          "Your LetConvo credit balance is running low. Your AI receptionist is still active, but service will pause once your balance reaches zero.",
+          "Top up now to stay ahead of it and avoid any interruption to calls, messages, and automations."
+        ],
+        highlight: { label: "Current Balance", value: `${credits} credits` },
+        preCta: "👉 Recharge now before it runs out.",
+        ctaLabel: "Recharge Now"
+      }
+    });
+  } else if (credits > LOW_CREDIT_WARNING_THRESHOLD && client.low_credit_warned) {
+    // Recovered above the warning line without going through auto top-up
+    // above (e.g. a manual admin credit adjustment) — clear the flag here
+    // too so the next dip warns again.
+    await supabase.from("clients").update({ low_credit_warned: false }).eq("id", clientId);
+  }
+
+  console.log("✅ Client not paused:", {
+    clientId,
+    credits,
+    minimumCredits,
+    status: client.status
+  });
+
+  return client;
+}
+
+// Backward compatibility for old imports
+export const pauseClientIfNoCredits = pauseClientIfLowCredits;
+
+export async function activateClientIfEnoughCredits(clientId, minimumCredits = 0) {
+  const { data: client, error } = await supabase
+    .from("clients")
+    .select("id, credits_remaining, status")
+    .eq("id", clientId)
+    .single();
+
+  if (error) throw error;
+
+  const credits = Number(client.credits_remaining || 0);
+
+  if (credits > minimumCredits && client.status !== "active") {
+    const { error: updateError } = await supabase
+      .from("clients")
+      .update({ status: "active" })
+      .eq("id", clientId);
+
+    if (updateError) throw updateError;
+
+    console.log("🟢 CLIENT RE-ACTIVATED:", {
+      clientId,
+      credits
+    });
+  }
+}
