@@ -5,11 +5,12 @@ import {
   formatTimeHuman,
   resolveRetellClientId
 } from "../utils/bookings.js";
+import { requireRetellSecret } from "../middleware/retellAuth.js";
 
 const router = express.Router();
 
 // Called by the Retell agent to look up an existing booking by phone number.
-router.post("/retell/get-booking", async (req, res) => {
+router.post("/retell/get-booking", requireRetellSecret, async (req, res) => {
   const clientId = resolveRetellClientId(req);
   // Same schema-drift issue as book_appointment — the LLM sometimes sends
   // phone_number instead of the declared phone property.

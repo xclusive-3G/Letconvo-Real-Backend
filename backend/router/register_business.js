@@ -2,6 +2,7 @@ import express from "express";
 import { supabase } from "../config/supabase.js";
 import { sendEmail } from "../utils/email.js";
 import { populateWebsiteInfo } from "../service/websiteInfo.js";
+import { strictLimiter } from "../middleware/rateLimit.js";
 
 const router = express.Router();
 
@@ -17,7 +18,7 @@ const TRIAL_CREDITS = 450;
 // the actual gate, since /register-business can be hit directly.
 const SUPPORTED_COUNTRIES = new Set(["united states", "usa", "us", "canada", "ca"]);
 
-router.post("/register-business", async (req, res) => {
+router.post("/register-business", strictLimiter, async (req, res) => {
   try {
     const {
       businessName,

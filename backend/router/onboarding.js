@@ -1,9 +1,10 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
+import { strictLimiter } from "../middleware/rateLimit.js";
 
 const router = express.Router();
 
-router.post("/onboard-client", async (req, res) => {
+router.post("/onboard-client", strictLimiter, async (req, res) => {
   try {
     const { businessName, phone, email } = req.body;
 

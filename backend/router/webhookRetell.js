@@ -1,13 +1,14 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
 import { findLatestBooking } from "../utils/bookings.js";
+import { requireRetellSecret } from "../middleware/retellAuth.js";
 
 const router = express.Router();
 
 // Legacy intent-style webhook (confirmed / reschedule / cancelled).
 // Kept for backward compatibility with any existing Retell agent config
 // that posts here instead of /retell/update-booking.
-router.post("/webhooks/retell", async (req, res) => {
+router.post("/webhooks/retell", requireRetellSecret, async (req, res) => {
   try {
     console.log("🤖 Retell webhook payload:", req.body);
 
