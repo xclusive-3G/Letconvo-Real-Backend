@@ -1,6 +1,7 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
 import { processCompletedCall } from "../service/retellCallProcessor.js";
+import { requireRetellSecret } from "../middleware/retellAuth.js";
 
 // import {
 //   addLiveCall,
@@ -93,7 +94,7 @@ async function resolveClientId(call) {
   return null;
 }
 
-router.post("/retell/webhook", async (req, res) => {
+router.post("/retell/webhook", requireRetellSecret, async (req, res) => {
   try {
     const event = req.body;
     const eventType = event.event || event.event_type;

@@ -1,6 +1,7 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
 import { sendEmail } from "../utils/email.js";
+import { strictLimiter } from "../middleware/rateLimit.js";
 
 const router = express.Router();
 
@@ -17,7 +18,7 @@ function escapeHtml(str) {
 }
 
 // Public — no auth, hit directly from the marketing site's Contact page.
-router.post("/contact", async (req, res) => {
+router.post("/contact", strictLimiter, async (req, res) => {
   try {
     const { firstName, lastName, email, phone, companyName, interest, message } = req.body;
 

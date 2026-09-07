@@ -1,11 +1,12 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
 import { getBusinessHours, workingDaySet, formatWorkingDaysText, ACTIVE_STATUSES, resolveRetellClientId } from "../utils/bookings.js";
+import { requireRetellSecret } from "../middleware/retellAuth.js";
 
 const router = express.Router();
 
 // Called by the Retell agent mid-call to find open appointment slots.
-router.post("/retell/get-slots", async (req, res) => {
+router.post("/retell/get-slots", requireRetellSecret, async (req, res) => {
   console.log("📅 Fetching available slots...");
 
   try {
@@ -99,7 +100,7 @@ const formatHour = (h) => {
 // to inject per-client dynamic variables at call start, so this works the
 // same way /retell/get-slots does — the agent calls it on demand instead
 // of relying on hours being baked into the call setup.
-router.post("/retell/get-business-hours", async (req, res) => {
+router.post("/retell/get-business-hours", requireRetellSecret, async (req, res) => {
   try {
     const clientId = resolveRetellClientId(req);
 

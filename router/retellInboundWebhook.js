@@ -1,6 +1,7 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
 import { findLatestBooking, formatDateHuman, formatTimeHuman, toHHMM, ACTIVE_STATUSES, formatWorkingDaysText } from "../utils/bookings.js";
+import { isRetellRequestAuthorized } from "../middleware/retellAuth.js";
 
 const router = express.Router();
 
@@ -26,6 +27,11 @@ const formatHour = (h) => {
 // SIP custom headers.
 router.post("/webhooks/retell/inbound-call", async (req, res) => {
   try {
+    if (!isRetellRequestAuthorized(req)) {
+      console.warn("❌ Retell inbound webhook: missing/invalid shared secret");
+      return res.json({ call_inbound: { reject: true } });
+    }
+
     if (req.body?.event !== "call_inbound") {
       return res.json({});
     }

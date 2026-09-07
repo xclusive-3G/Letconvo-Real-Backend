@@ -8,11 +8,12 @@ import {
   cancelAppointmentReminder,
   resolveRetellClientId
 } from "../utils/bookings.js";
+import { requireRetellSecret } from "../middleware/retellAuth.js";
 
 const router = express.Router();
 
 // Called by the Retell agent to confirm, cancel, or reschedule a booking.
-router.post("/retell/update-booking", async (req, res) => {
+router.post("/retell/update-booking", requireRetellSecret, async (req, res) => {
   const clientId = resolveRetellClientId(req);
   // Same schema-drift issue as book_appointment/get_existing_booking — the
   // LLM sometimes sends alternate field names instead of the declared ones.

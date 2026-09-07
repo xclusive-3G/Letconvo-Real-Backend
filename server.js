@@ -27,17 +27,26 @@ import contactRouter from "./router/contact.js";
 import callHistory from "./router/callHistory.js";
 import { supabase } from "./config/supabase.js";
 import { addCallJob } from "./queue/queue.js";
+import { generalLimiter } from "./middleware/rateLimit.js";
 
 
 
 const app = express();
-app.use(cors());
-cors({
-    origin: "letconvo.live",
-    methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type"],
-    credentials: true
-});
+
+// Retell/Telnyx webhooks and tool calls are server-to-server (not
+// browser-originated), so they're unaffected by CORS either way — this
+// only actually restricts who the frontend's browser-based calls can be
+// made from. Previously this was `app.use(cors())` (any origin) followed
+// by a second `cors({...})` call whose result was never passed to
+// `app.use()`, so the intended restriction never took effect.
+app.use(cors({
+  origin: ["https://letconvo.live", "http://localhost:3000"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+}));
+
+app.use(generalLimiter);
 
 // Paystack needs the raw, unparsed request body to verify webhook
 // signatures. Scoped to this exact path (not "/") so express.json() below
