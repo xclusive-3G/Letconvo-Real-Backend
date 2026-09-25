@@ -2,6 +2,7 @@ import { supabase } from "../config/supabase.js";
 import { createBillingTransaction } from "./billingTransaction.js";
 import { deductCreditsAtomic, pauseClientIfLowCredits } from "./credit.js";
 import { createNotification } from "../utils/createNotification.js";
+import { extractCallerName } from "../utils/callerName.js";
 
 const MIN_CALL_CREDITS = 1;
 const MIN_START_CREDITS = 30; // 1 minute of call time at CREDITS_PER_SECOND below
@@ -71,6 +72,8 @@ export async function processCompletedCall({ call, clientId, rawEvent }) {
   const callCost = getCallCost(call);
   const durationSeconds = getDurationSeconds(call);
   const durationMinutes = durationSeconds > 0 ? Math.ceil(durationSeconds / 60) : 0;
+  const callerName = extractCallerName(call?.transcript_with_tool_calls);
+  const callerLabel = callerName || getCallerPhone(call) || "Unknown caller";
 
   // When this runs via reconciliation (backfilling calls Retell's webhook
   // never delivered), letting the DB default created_at to "now" would make
@@ -89,6 +92,7 @@ export async function processCompletedCall({ call, clientId, rawEvent }) {
       recovery_id: recoveryId,
       retell_call_id: retellCallId,
       caller_phone: getCallerPhone(call),
+      caller_name: callerName,
       direction: call?.direction || null,
       duration_ms: durationSeconds * 1000,
       duration_minutes: durationMinutes,
@@ -110,7 +114,7 @@ export async function processCompletedCall({ call, clientId, rawEvent }) {
       await createNotification({
         clientId,
         title: "Missed call",
-        message: `Missed call from ${getCallerPhone(call) || "unknown number"}`,
+        message: `Missed call from ${callerLabel}`,
         type: "call"
       });
     }
@@ -153,6 +157,7 @@ export async function processCompletedCall({ call, clientId, rawEvent }) {
     recovery_id: recoveryId,
     retell_call_id: retellCallId,
     caller_phone: getCallerPhone(call),
+    caller_name: callerName,
     direction: call?.direction || null,
     duration_ms: durationSeconds * 1000,
     duration_minutes: durationMinutes,
@@ -175,7 +180,7 @@ export async function processCompletedCall({ call, clientId, rawEvent }) {
   await createNotification({
     clientId,
     title: "Call completed",
-    message: `${getCallerPhone(call) || "Unknown caller"} · ${durationMinutes} min`,
+    message: `${callerLabel} · ${durationMinutes} min`,
     type: "call"
   });
 

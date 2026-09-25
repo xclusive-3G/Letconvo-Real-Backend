@@ -2,6 +2,7 @@ import express from "express";
 import { supabase } from "../config/supabase.js";
 import { processCompletedCall } from "../service/retellCallProcessor.js";
 import { requireRetellSecret } from "../middleware/retellAuth.js";
+import { extractCallerName } from "../utils/callerName.js";
 
 // import {
 //   addLiveCall,
@@ -171,6 +172,12 @@ router.post("/retell/webhook", requireRetellSecret, async (req, res) => {
 
     if (eventType === "call_analyzed") {
       const durationSeconds = getDurationSeconds(call);
+      // A name found here (from tool calls, which Retell sometimes only
+      // delivers fully at this later event, not at call_ended) overwrites
+      // any earlier value; finding nothing here must not clobber a name
+      // already saved from an earlier event, so caller_name is only
+      // included in the update when extraction actually finds one.
+      const analyzedCallerName = extractCallerName(call?.transcript_with_tool_calls);
 
       const { error } = await supabase
         .from("retell_call_logs")
@@ -183,6 +190,7 @@ router.post("/retell/webhook", requireRetellSecret, async (req, res) => {
           call_summary: getCallSummary(call),
           sentiment: getSentiment(call),
           caller_phone: getCallerPhone(call),
+          ...(analyzedCallerName ? { caller_name: analyzedCallerName } : {}),
           duration_ms:
             call?.duration_ms ||
             call?.durationMs ||
@@ -234,6 +242,8 @@ router.post("/retell/webhook", requireRetellSecret, async (req, res) => {
     if (existingError) throw existingError;
 
     if (existing) {
+      const endedCallerName = extractCallerName(call?.transcript_with_tool_calls);
+
       await supabase
         .from("retell_call_logs")
         .update({
@@ -245,6 +255,7 @@ router.post("/retell/webhook", requireRetellSecret, async (req, res) => {
           call_summary: getCallSummary(call),
           sentiment: getSentiment(call),
           caller_phone: getCallerPhone(call),
+          ...(endedCallerName ? { caller_name: endedCallerName } : {}),
           raw_payload: event
         })
         .eq("retell_call_id", retellCallId);
