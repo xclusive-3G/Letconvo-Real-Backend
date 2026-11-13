@@ -1069,6 +1069,13 @@ router.get("/me/settings", requireAuth, async (req, res) => {
     const plan = await resolveClientPlan(client);
     const usedMinutes = await getMonthlyMinutesUsed(client.id);
 
+    const { data: calendarIntegration } = await supabase
+      .from("calendar_integrations")
+      .select("email, connected")
+      .eq("user_id", client.user_id)
+      .eq("provider", "google")
+      .maybeSingle();
+
     return res.json({
       success: true,
       settings: {
@@ -1078,6 +1085,8 @@ router.get("/me/settings", requireAuth, async (req, res) => {
         adminEmail: client.ownerEmail || client.email || "",
         timezone: settings?.timezone || "Africa/Lagos",
         calendarSync: settings?.calendar_sync ?? false,
+        calendarConnected: Boolean(calendarIntegration?.connected),
+        calendarEmail: calendarIntegration?.email || null,
         crmSync: settings?.crm_sync ?? false,
         webhookUrl: settings?.webhook_url || "",
         zapierKey: settings?.zapier_key || "",

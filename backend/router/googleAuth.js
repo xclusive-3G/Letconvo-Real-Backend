@@ -7,16 +7,115 @@ import express from "express";
 
 const router = express.Router();
 
+const FRONTEND_URL = process.env.FRONTEND_URL || "https://letconvo.live";
+
+router.get(
+    "/auth/google/callback",
+    async (req, res) => {
+        const { code, state } = req.query;
+
+        try {
+            const { data: oauthState, error } =
+                await supabase
+                    .from("oauth_states")
+                    .select("*")
+                    .eq("id", state)
+                    .single();
+
+            if (error || !oauthState) {
+                return res.redirect(
+                    `${FRONTEND_URL}/dashboard?settings=error`
+                );
+            }
+
+            const userId = oauthState.user_id;
+
+            const { tokens } =
+                await oauthClient.getToken(code);
+
+            oauthClient.setCredentials(tokens);
+
+            const oauth2 = google.oauth2({
+                auth: oauthClient,
+                version: "v2",
+            });
+
+            const existing = await supabase
+                .from("calendar_integrations")
+                .select("refresh_token")
+                .eq("user_id", userId)
+                .single();
+
+            const userInfo =
+                await oauth2.userinfo.get();
+
+            await supabase
+                .from("calendar_integrations")
+                .upsert(
+                    {
+                        user_id: userId,
+                        provider: "google",
+                        email: userInfo.data.email,
+                        access_token: tokens.access_token,
+                        refresh_token:
+                            tokens.refresh_token ||
+                            existing?.data?.refresh_token,
+                        calendar_id: "primary",
+                        connected: true,
+                    },
+                    {
+                        onConflict: "user_id"
+                    }
+                );
+
+            await supabase
+                .from("oauth_states")
+                .delete()
+                .eq("id", state);
+
+            res.redirect(
+                `${FRONTEND_URL}/dashboard?settings=success`
+            );
+        } catch (err) {
+            console.error("Google Calendar OAuth callback failed:", err);
+            res.redirect(
+                `${FRONTEND_URL}/dashboard?settings=error`
+            );
+        }
+    }
+);
+
 router.get("/auth/google/:userId", async (req, res) => {
     try {
+        const { data: client, error: clientError } = await supabase
+            .from("clients")
+            .select("user_id")
+            .eq("id", req.params.userId)
+            .single();
+
+        if (clientError || !client) {
+            return res.status(404).json({
+                success: false,
+                message: "Client not found",
+            });
+        }
+
         const state = crypto.randomUUID();
 
-        await supabase
+        const { error: insertError } = await supabase
             .from("oauth_states")
             .insert({
                 id: state,
-                user_id: req.params.userId,
+                user_id: client.user_id,
             });
+
+        if (insertError) {
+            console.error("Failed to create oauth_states row:", insertError);
+            return res.status(500).json({
+                success: false,
+                message: "Failed to start Google OAuth",
+            });
+        }
 
         const url = oauthClient.generateAuthUrl({
             access_type: "offline",
@@ -24,6 +123,7 @@ router.get("/auth/google/:userId", async (req, res) => {
             scope: [
                 "https://www.googleapis.com/auth/calendar.events",
                 "https://www.googleapis.com/auth/calendar.freebusy",
+                "https://www.googleapis.com/auth/userinfo.email",
             ],
             state,
         });
@@ -37,76 +137,6 @@ router.get("/auth/google/:userId", async (req, res) => {
         });
     }
 });
-
-router.get(
-    "/auth/google/callback",
-    async (req, res) => {
-        const { code, state } = req.query;
-
-        const { data: oauthState, error } =
-            await supabase
-                .from("oauth_states")
-                .select("*")
-                .eq("id", state)
-                .single();
-
-        if (error || !oauthState) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid OAuth state",
-            });
-        }
-
-        const userId = oauthState.user_id;
-
-        const { tokens } =
-            await oauthClient.getToken(code);
-
-        oauthClient.setCredentials(tokens);
-
-        const oauth2 = google.oauth2({
-            auth: oauthClient,
-            version: "v2",
-        });
-
-        const existing = await supabase
-            .from("calendar_integrations")
-            .select("refresh_token")
-            .eq("user_id", userId)
-            .single();
-
-        const userInfo =
-            await oauth2.userinfo.get();
-
-        await supabase
-            .from("calendar_integrations")
-            .upsert(
-                {
-                    user_id: userId,
-                    provider: "google",
-                    email: userInfo.data.email,
-                    access_token: tokens.access_token,
-                    refresh_token:
-                        tokens.refresh_token ||
-                        existing?.data?.refresh_token,
-                    calendar_id: "primary",
-                    connected: true,
-                },
-                {
-                    onConflict: "user_id"
-                }
-            );
-
-        await supabase
-            .from("oauth_states")
-            .delete()
-            .eq("id", state);
-
-        res.redirect(
-            "https://letconvo.live/settings?success=true"
-        );
-    }
-);
 
 export async function getUserCalendar(
     userId
