@@ -9,6 +9,7 @@ import {
   resolveRetellClientId
 } from "../utils/bookings.js";
 import { requireRetellSecret } from "../middleware/retellAuth.js";
+import { isSlotBusy, syncBookingToCalendar } from "../service/googleCalendar.js";
 
 const router = express.Router();
 
@@ -57,6 +58,24 @@ router.post("/retell/update-booking", requireRetellSecret, async (req, res) => {
       updates.status = "rescheduled";
     }
 
+    // Moving to a new time: make sure the business's Google Calendar (when
+    // synced) is free then, ignoring this booking's own event.
+    const targetStatus = updates.status || existing.status;
+    if ((newDate || newTime) && ACTIVE_STATUSES.includes(targetStatus)) {
+      const busy = await isSlotBusy(
+        clientId,
+        newDate || existing.appointment_date,
+        newTime || existing.appointment_time,
+        { excludeEventId: existing.google_event_id }
+      );
+      if (busy) {
+        return res.json({
+          success: false,
+          error: "That new time isn't available. Please choose another time."
+        });
+      }
+    }
+
     const { data, error } = await supabase
       .from("bookings")
       .update(updates)
@@ -75,6 +94,8 @@ router.post("/retell/update-booking", requireRetellSecret, async (req, res) => {
     } else if (!ACTIVE_STATUSES.includes(data.status)) {
       await cancelAppointmentReminder(data.id);
     }
+
+    await syncBookingToCalendar(data);
 
     return res.json({ success: true, booking: data });
 

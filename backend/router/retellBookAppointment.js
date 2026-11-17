@@ -3,6 +3,7 @@ import { supabase } from "../config/supabase.js";
 import { normalizePhone, ACTIVE_STATUSES, scheduleAppointmentReminder, resolveRetellClientId } from "../utils/bookings.js";
 import { createNotification } from "../utils/createNotification.js";
 import { requireRetellSecret } from "../middleware/retellAuth.js";
+import { isSlotBusy, syncBookingToCalendar } from "../service/googleCalendar.js";
 
 const router = express.Router();
 
@@ -54,6 +55,15 @@ router.post("/book-appointment", requireRetellSecret, async (req, res) => {
       });
     }
 
+    // The business's own Google Calendar (when synced) can also have this
+    // time taken by something that isn't a Letconvo booking.
+    if (await isSlotBusy(clientId, date, time)) {
+      return res.status(409).json({
+        success: false,
+        error: "That time isn't available. Please choose another time."
+      });
+    }
+
     const { data, error } = await supabase
       .from("bookings")
       .insert({
@@ -82,6 +92,7 @@ router.post("/book-appointment", requireRetellSecret, async (req, res) => {
     });
 
     await scheduleAppointmentReminder(data);
+    await syncBookingToCalendar(data);
 
     return res.status(201).json({ success: true, booking: data });
   } catch (err) {

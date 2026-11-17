@@ -2,6 +2,7 @@ import express from "express";
 import { supabase } from "../config/supabase.js";
 import { normalizePhone, ACTIVE_STATUSES, scheduleAppointmentReminder } from "../utils/bookings.js";
 import { createNotification } from "../utils/createNotification.js";
+import { isSlotBusy, syncBookingToCalendar } from "../service/googleCalendar.js";
 
 const router = express.Router();
 
@@ -48,6 +49,10 @@ router.post("/api/bookings", async (req, res) => {
       return res.status(409).json({ error: "That slot was just taken. Please choose another time." });
     }
 
+    if (await isSlotBusy(clientId, date, time)) {
+      return res.status(409).json({ error: "That time isn't available. Please choose another time." });
+    }
+
     const { data, error } = await supabase
       .from("bookings")
       .insert({
@@ -76,6 +81,7 @@ router.post("/api/bookings", async (req, res) => {
     });
 
     await scheduleAppointmentReminder(data);
+    await syncBookingToCalendar(data);
 
     return res.status(201).json(data);
 

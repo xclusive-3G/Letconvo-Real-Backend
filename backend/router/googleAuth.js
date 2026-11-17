@@ -1,13 +1,49 @@
 import crypto from "crypto";
-import { oauthClient } from "../config/googleOath.js";
+import { oauthClient, createOAuthClient } from "../config/googleOath.js";
 import { supabase } from "../config/supabase.js";
 import { google } from "googleapis";
 import express from "express";
+import { backfillUpcomingBookings } from "../service/googleCalendar.js";
 
 
 const router = express.Router();
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://letconvo.live";
+
+// Connecting a calendar is an explicit "yes, use my calendar", so switch
+// "Google Calendar Sync" on for the business. Without this, sync stays at
+// its default (off) and nothing would reach the calendar until the owner
+// also found and saved the toggle.
+async function enableCalendarSync(userId) {
+    const { data: client } = await supabase
+        .from("clients")
+        .select("id")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+    if (!client) return null;
+
+    const { data: settings } = await supabase
+        .from("client_settings")
+        .select("id")
+        .eq("client_id", client.id)
+        .maybeSingle();
+
+    const { error } = settings
+        ? await supabase
+            .from("client_settings")
+            .update({ calendar_sync: true })
+            .eq("client_id", client.id)
+        : await supabase
+            .from("client_settings")
+            .insert({ client_id: client.id, calendar_sync: true });
+
+    if (error) {
+        console.error("⚠️ Could not enable calendar_sync after connecting:", error.message);
+    }
+    return client.id;
+}
 
 router.get(
     "/auth/google/callback",
@@ -30,13 +66,17 @@ router.get(
 
             const userId = oauthState.user_id;
 
-            const { tokens } =
-                await oauthClient.getToken(code);
+            // Per-request client: setCredentials() on a shared client would
+            // let two businesses connecting at once see each other's tokens.
+            const authClient = createOAuthClient();
 
-            oauthClient.setCredentials(tokens);
+            const { tokens } =
+                await authClient.getToken(code);
+
+            authClient.setCredentials(tokens);
 
             const oauth2 = google.oauth2({
-                auth: oauthClient,
+                auth: authClient,
                 version: "v2",
             });
 
@@ -72,6 +112,14 @@ router.get(
                 .from("oauth_states")
                 .delete()
                 .eq("id", state);
+
+            const clientId = await enableCalendarSync(userId);
+
+            // Put the business's already-booked upcoming appointments on the
+            // calendar too. Fire-and-forget so the redirect isn't held up.
+            if (clientId) {
+                backfillUpcomingBookings(clientId).catch(() => {});
+            }
 
             res.redirect(
                 `${FRONTEND_URL}/dashboard?settings=success`
@@ -138,300 +186,11 @@ router.get("/auth/google/:userId", async (req, res) => {
     }
 });
 
-export async function getUserCalendar(
-    userId
-) {
-    const { data } = await supabase
-        .from("calendar_integrations")
-        .select("*")
-        .eq("user_id", userId)
-        .single();
-
-    return data;
-}
-
-export async function createGoogleClient(
-    userId
-) {
-    const integration =
-        await getUserCalendar(userId);
-
-    oauthClient.setCredentials({
-        refresh_token:
-            integration.refresh_token,
-    });
-
-    return google.calendar({
-        version: "v3",
-        auth: oauthClient,
-    });
-}
-
-export async function checkAvailability(
-    userId,
-    start,
-    end
-) {
-    const calendar =
-        await createGoogleClient(userId);
-
-    const response =
-        await calendar.freebusy.query({
-            requestBody: {
-                timeMin: start,
-                timeMax: end,
-
-                items: [
-                    {
-                        id: "primary",
-                    },
-                ],
-            },
-        });
-
-    const busy =
-        response.data.calendars.primary.busy;
-
-    return busy.length === 0;
-}
-
-export async function createAppointment(
-    userId,
-    appointment
-) {
-    const calendar =
-        await createGoogleClient(userId);
-
-    return calendar.events.insert({
-        calendarId: "primary",
-
-        requestBody: {
-            summary:
-                appointment.customerName,
-
-            description:
-                appointment.notes,
-
-            start: {
-                dateTime:
-                    appointment.startTime,
-            },
-
-            end: {
-                dateTime:
-                    appointment.endTime,
-            },
-        },
-    });
-}
-
-router.post(
-    "/appointments/book",
-    async (req, res) => {
-        try {
-            const {
-                customerName,
-                startTime,
-                endTime,
-            } = req.body;
-
-            const userId = req.user.id;
-
-            const available =
-                await checkAvailability(
-                    userId,
-                    startTime,
-                    endTime
-                );
-
-            if (!available) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Time slot unavailable",
-                });
-            }
-
-            const event =
-                await createAppointment(
-                    userId,
-                    {
-                        customerName,
-                        startTime,
-                        endTime,
-                    }
-                );
-
-            return res.json({
-                success: true,
-                event,
-            });
-        } catch (err) {
-            console.error(err);
-
-            return res.status(500).json({
-                success: false,
-            });
-        }
-    }
-);
-
-
-router.post(
-    "/tools/check-availability",
-    async (req, res) => {
-        try {
-            const {
-                retell_agent_id,
-                start_time,
-                end_time,
-            } = req.body;
-
-            if (
-                !retell_agent_id ||
-                !start_time ||
-                !end_time
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Missing required fields",
-                });
-            }
-
-            const { data: agent, error } =
-                await supabase
-                    .from("ai_agents")
-                    .select("user_id")
-                    .eq(
-                        "retell_agent_id",
-                        retell_agent_id
-                    )
-                    .single();
-
-            if (error || !agent) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Agent not found",
-                });
-            }
-
-            const available =
-                await checkAvailability(
-                    agent.user_id,
-                    start_time,
-                    end_time
-                );
-
-            return res.json({
-                success: true,
-                available,
-            });
-        } catch (error) {
-            console.error(error);
-
-            return res.status(500).json({
-                success: false,
-                message:
-                    "Failed to check availability",
-            });
-        }
-    }
-);
-
-
-router.post(
-    "/tools/book-appointment",
-    async (req, res) => {
-        try {
-            const {
-                retell_agent_id,
-                customer_name,
-                customer_phone,
-                start_time,
-                end_time,
-                notes,
-            } = req.body;
-
-            if (
-                !retell_agent_id ||
-                !customer_name ||
-                !start_time ||
-                !end_time
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Missing required fields",
-                });
-            }
-
-            const { data: agent, error } =
-                await supabase
-                    .from("ai_agents")
-                    .select("user_id")
-                    .eq(
-                        "retell_agent_id",
-                        retell_agent_id
-                    )
-                    .single();
-
-            if (error || !agent) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Agent not found",
-                });
-            }
-
-            const available =
-                await checkAvailability(
-                    agent.user_id,
-                    start_time,
-                    end_time
-                );
-
-            if (!available) {
-                return res.status(400).json({
-                    success: false,
-                    message:
-                        "Requested time slot is unavailable",
-                });
-            }
-
-            const event =
-                await createAppointment(
-                    agent.user_id,
-                    {
-                        customerName:
-                            customer_name,
-
-                        notes:
-                            notes ||
-                            `Phone: ${customer_phone || "N/A"}`,
-
-                        startTime:
-                            start_time,
-
-                        endTime:
-                            end_time,
-                    }
-                );
-
-            return res.json({
-                success: true,
-                event_id:
-                    event.data.id,
-
-                meeting_link:
-                    event.data.hangoutLink || null,
-            });
-        } catch (error) {
-            console.error(error);
-
-            return res.status(500).json({
-                success: false,
-                message:
-                    "Failed to create appointment",
-            });
-        }
-    }
-);
+// Booking <-> Google Calendar sync lives in service/googleCalendar.js and
+// is wired into the real booking routes (book-appointment, /api/bookings,
+// get-slots, update-booking, the dashboard appointment PATCH). The earlier
+// /appointments/book and /tools/* endpoints that used to live here were
+// never called by the Retell agent, depended on a non-existent ai_agents
+// table, and never wrote to the bookings table, so they've been removed.
 
 export default router;

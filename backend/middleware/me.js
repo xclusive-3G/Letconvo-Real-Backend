@@ -10,6 +10,7 @@ import {
   formatTimeHuman
 } from "../utils/bookings.js";
 import { sendSms } from "../service/telnyx.js";
+import { syncBookingToCalendar, backfillUpcomingBookings } from "../service/googleCalendar.js";
 import { hasEnoughCredits, deductCreditsAtomic, SMS_CREDIT_COST } from "../service/credit.js";
 // import {
 //   getLiveCalls
@@ -431,6 +432,10 @@ router.patch("/me/appointments/:id", requireAuth, async (req, res) => {
     } else if (!ACTIVE_STATUSES.includes(data.status)) {
       await cancelAppointmentReminder(data.id);
     }
+
+    // Staff edits are a deliberate choice, so no busy-check here — just
+    // move/remove the matching Google Calendar event to match.
+    await syncBookingToCalendar(data);
 
     return res.json({ success: true, appointment: data });
   } catch (err) {
@@ -1149,13 +1154,13 @@ router.put("/me/settings", requireAuth, async (req, res) => {
 
     const { data: existingSettings, error: existingError } = await supabase
       .from("client_settings")
-      .select("id")
+      .select("id, calendar_sync")
       .eq("client_id", client.id)
       .maybeSingle();
 
     if (existingError) throw existingError;
 
-    
+    const calendarSyncTurnedOn = calendarSync === true && existingSettings?.calendar_sync !== true;
 
     const settingsPayload = {
       client_id: client.id,
@@ -1192,6 +1197,12 @@ router.put("/me/settings", requireAuth, async (req, res) => {
     }
 
     if (settingsError) throw settingsError;
+
+    // Sync just switched on: put upcoming appointments that aren't on the
+    // calendar yet onto it. Fire-and-forget so saving settings stays fast.
+    if (calendarSyncTurnedOn) {
+      backfillUpcomingBookings(client.id).catch(() => {});
+    }
 
     return res.json({
       success: true,

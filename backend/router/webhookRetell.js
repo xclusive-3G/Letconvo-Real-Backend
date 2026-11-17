@@ -2,6 +2,7 @@ import express from "express";
 import { supabase } from "../config/supabase.js";
 import { findLatestBooking } from "../utils/bookings.js";
 import { requireRetellSecret } from "../middleware/retellAuth.js";
+import { syncBookingToCalendar } from "../service/googleCalendar.js";
 
 const router = express.Router();
 
@@ -38,12 +39,16 @@ router.post("/webhooks/retell", requireRetellSecret, async (req, res) => {
       return res.status(400).json({ error: `Unsupported intent: ${intent}` });
     }
 
-    const { error } = await supabase
+    const { data: updated, error } = await supabase
       .from("bookings")
       .update(updates)
-      .eq("id", existing.id);
+      .eq("id", existing.id)
+      .select()
+      .single();
 
     if (error) throw error;
+
+    await syncBookingToCalendar(updated);
 
     console.log(`✅ Booking ${existing.id} updated via intent "${intent}" for ${phone}`);
 

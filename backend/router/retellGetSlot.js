@@ -2,6 +2,13 @@ import express from "express";
 import { supabase } from "../config/supabase.js";
 import { getBusinessHours, workingDaySet, formatWorkingDaysText, ACTIVE_STATUSES, resolveRetellClientId } from "../utils/bookings.js";
 import { requireRetellSecret } from "../middleware/retellAuth.js";
+import {
+  APPOINTMENT_MINUTES,
+  getCalendarContext,
+  getBusyIntervals,
+  overlapsBusy,
+  wallTimeToUtcMs
+} from "../service/googleCalendar.js";
 
 const router = express.Router();
 
@@ -44,6 +51,25 @@ router.post("/retell/get-slots", requireRetellSecret, async (req, res) => {
       )
     );
 
+    // If the business synced Google Calendar, also skip times that are
+    // already taken there (the owner's own meetings, blocks, etc.). null
+    // when sync is off or Google is unreachable -> DB-only availability.
+    const calendarCtx = await getCalendarContext(clientId);
+    const busy = calendarCtx
+      ? await getBusyIntervals(
+          clientId,
+          now.getTime() - 24 * 60 * 60 * 1000,
+          windowEnd.getTime() + 2 * 24 * 60 * 60 * 1000,
+          { ctx: calendarCtx }
+        )
+      : null;
+
+    const busyInCalendar = (dateStr, timeStr) => {
+      if (!busy) return false;
+      const start = wallTimeToUtcMs(dateStr, timeStr, calendarCtx.timeZone);
+      return overlapsBusy(busy, start, start + APPOINTMENT_MINUTES * 60 * 1000);
+    };
+
     // Build available slots, one per hour, within business hours, skipping
     // any day not in the client's configured working days.
     const slots = [];
@@ -60,7 +86,7 @@ router.post("/retell/get-slots", requireRetellSecret, async (req, res) => {
         const timeStr = `${String(hour).padStart(2, "0")}:00`;
         const key = `${dateStr}T${timeStr}`;
 
-        if (!bookedKeys.has(key)) {
+        if (!bookedKeys.has(key) && !busyInCalendar(dateStr, timeStr)) {
           slots.push({
             date: cursor.toLocaleDateString("en-US", {
               weekday: "long",
