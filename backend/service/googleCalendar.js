@@ -20,45 +20,15 @@ import { google } from "googleapis";
 import { supabase } from "../config/supabase.js";
 import { createOAuthClient } from "../config/googleOath.js";
 import { ACTIVE_STATUSES, toHHMM } from "../utils/bookings.js";
+import { resolveTimeZone, wallTimeToUtcMs } from "../utils/timezone.js";
+
+export { wallTimeToUtcMs };
 
 // Slots are hourly (see router/retellGetSlot.js), so each booking blocks
 // one hour on the calendar.
 export const APPOINTMENT_MINUTES = 60;
 
-const DEFAULT_TIMEZONE = "America/New_York";
 const GOOGLE_TIMEOUT_MS = 5000;
-
-// ---------------------------------------------------------------------------
-// Timezone helpers. Bookings store wall-clock date/time strings in the
-// business's own timezone (client_settings.timezone), not UTC instants.
-// ---------------------------------------------------------------------------
-
-function tzOffsetMs(instantMs, timeZone) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit"
-  }).formatToParts(new Date(instantMs));
-  const get = (t) => Number(parts.find((p) => p.type === t).value);
-  const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
-  return asUtc - instantMs;
-}
-
-// "2026-11-20", "14:00", "America/New_York" -> UTC epoch ms of that local moment.
-export function wallTimeToUtcMs(dateStr, hhmm, timeZone) {
-  const [y, mo, d] = String(dateStr).split("-").map(Number);
-  const [h, mi] = toHHMM(hhmm || "00:00").split(":").map(Number);
-  const guess = Date.UTC(y, mo - 1, d, h, mi || 0, 0);
-  let result = guess - tzOffsetMs(guess, timeZone);
-  // Second pass corrects the rare case where the first guess straddles a DST change.
-  result = guess - tzOffsetMs(result, timeZone);
-  return result;
-}
 
 // Adds minutes to a wall-clock date/time without involving any timezone,
 // e.g. ("2026-11-20", "23:30", 60) -> { date: "2026-11-21", time: "00:30" }.
@@ -114,7 +84,7 @@ export async function getCalendarContext(clientId) {
     return {
       calendar: google.calendar({ version: "v3", auth }),
       calendarId: integration.calendar_id || "primary",
-      timeZone: settings?.timezone || DEFAULT_TIMEZONE,
+      timeZone: resolveTimeZone(settings?.timezone),
       userId: client.user_id
     };
   } catch (err) {

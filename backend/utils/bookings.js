@@ -30,7 +30,7 @@ const DEFAULT_WORKING_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Fri
 export async function getBusinessHours(clientId) {
   const { data, error } = await supabase
     .from("client_settings")
-    .select("open_hour, close_hour, working_days")
+    .select("open_hour, close_hour, working_days, timezone")
     .eq("client_id", clientId)
     .maybeSingle();
 
@@ -47,7 +47,10 @@ export async function getBusinessHours(clientId) {
   return {
     openHour: Number.isFinite(openHour) ? openHour : 9,
     closeHour: Number.isFinite(closeHour) ? closeHour : 18,
-    workingDays
+    workingDays,
+    // Raw IANA name (may be null) — callers run it through
+    // utils/timezone.js's resolveTimeZone().
+    timezone: data?.timezone || null
   };
 }
 
