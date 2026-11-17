@@ -32,6 +32,11 @@ import { generalLimiter } from "./middleware/rateLimit.js";
 
 
 const app = express();
+// Production runs behind nginx on the same box (proxy to 127.0.0.1:5000).
+// Trust exactly that one hop so req.ip is the real caller from
+// X-Forwarded-For — otherwise every request looks like 127.0.0.1 and the
+// rate limiters below lump all users, Retell and Telnyx into one bucket.
+app.set("trust proxy", 1);
 
 // Retell/Telnyx webhooks and tool calls are server-to-server (not
 // browser-originated), so they're unaffected by CORS either way — this
