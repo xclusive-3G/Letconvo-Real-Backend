@@ -1,6 +1,6 @@
 import express from "express";
 import { supabase } from "../config/supabase.js";
-import { findLatestBooking, formatDateHuman, formatTimeHuman, toHHMM, ACTIVE_STATUSES, formatWorkingDaysText } from "../utils/bookings.js";
+import { findLatestBooking, formatDateHuman, formatTimeHuman, ACTIVE_STATUSES, formatWorkingDaysText, appointmentStartMs } from "../utils/bookings.js";
 import { isRetellRequestAuthorized } from "../middleware/retellAuth.js";
 
 const router = express.Router();
@@ -63,7 +63,8 @@ router.post("/webhooks/retell/inbound-call", async (req, res) => {
             booking_info_fields,
             services_offered,
             booking_policies,
-            website_info
+            website_info,
+            timezone
           )
         )
       `)
@@ -138,10 +139,11 @@ router.post("/webhooks/retell/inbound-call", async (req, res) => {
     // the LLM to reason about dates correctly mid-call.
     let bookingIsUpcoming = false;
     if (existingBooking) {
-      const apptDateTime = new Date(`${existingBooking.appointment_date}T${toHHMM(existingBooking.appointment_time)}:00`);
+      // Read in the business's timezone — the server runs in UTC.
+      const apptMs = await appointmentStartMs(existingBooking, settings?.timezone);
       bookingIsUpcoming =
-        !Number.isNaN(apptDateTime.getTime()) &&
-        apptDateTime.getTime() > Date.now() &&
+        Number.isFinite(apptMs) &&
+        apptMs > Date.now() &&
         ACTIVE_STATUSES.includes(existingBooking.status);
     }
 

@@ -11,10 +11,16 @@ import { createRetellCallback } from "./retell.js";
 import { sendMissedCallSms } from "./telnyx.js";
 import { deductCreditsAtomic, hasEnoughCredits, pauseClientIfLowCredits, SMS_CREDIT_COST } from "./credit.js";
 import { isSmsNotifEnabled } from "../utils/createNotification.js";
+import { getClientTimezone } from "../utils/bookings.js";
+import { zonedParts } from "../utils/timezone.js";
 
-function isWithinAllowedHours() {
-  const now = new Date();
-  const hour = now.getHours();
+// The callback window (CALLBACK_ALLOWED_START/END_HOUR, default 8am-8pm)
+// is checked against the business's local time — callers to a local
+// business are local — not the server's clock, which is UTC on EC2 and
+// would put a New York business's window at 3am-3pm.
+async function isWithinAllowedHours(clientId) {
+  const tz = await getClientTimezone(clientId);
+  const hour = zonedParts(Date.now(), tz).hour;
 
   return (
     hour >= Number(env.CALLBACK_ALLOWED_START_HOUR) &&
@@ -137,7 +143,7 @@ export async function processCallbackJob(recoveryId) {
     return null;
   }
 
-  if (!isWithinAllowedHours()) {
+  if (!(await isWithinAllowedHours(recovery.clientId))) {
     await updateRecovery(recovery.id, {
       status: "outside_business_hours",
       callbackStatus: "blocked_outside_hours"

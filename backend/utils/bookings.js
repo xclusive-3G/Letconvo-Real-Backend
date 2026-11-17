@@ -1,5 +1,6 @@
 import { supabase } from "../config/supabase.js";
 import { reminderQueue } from "../queue/reminderQueue.js";
+import { resolveTimeZone, wallTimeToUtcMs } from "./timezone.js";
 
 // Minutes before the appointment the reminder call should go out.
 export const REMINDER_LEAD_MINUTES = 20;
@@ -99,6 +100,34 @@ export function toHHMM(time) {
   return String(time || "").slice(0, 5);
 }
 
+// The business's IANA timezone (client_settings.timezone), validated,
+// falling back to America/New_York. The server runs in UTC, so this is
+// what any "what time is it for this business" logic must use.
+export async function getClientTimezone(clientId) {
+  const { data, error } = await supabase
+    .from("client_settings")
+    .select("timezone")
+    .eq("client_id", clientId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("⚠️ Could not load client timezone, using default:", error.message);
+  }
+  return resolveTimeZone(data?.timezone);
+}
+
+// The real moment (UTC epoch ms) a booking starts. appointment_date/time
+// are the business's local wall-clock values, so they must be read in the
+// business's timezone — `new Date("2026-11-20T14:00:00")` would read them
+// in the server's timezone (UTC) instead, hours off for a US business.
+// Pass timeZone when the caller already has it, to skip the lookup.
+// Returns NaN if the booking's date/time is missing or malformed.
+export async function appointmentStartMs(booking, timeZone) {
+  if (!booking?.appointment_date || !booking?.appointment_time) return NaN;
+  const tz = timeZone ? resolveTimeZone(timeZone) : await getClientTimezone(booking.client_id);
+  return wallTimeToUtcMs(booking.appointment_date, toHHMM(booking.appointment_time), tz);
+}
+
 export function formatDateHuman(dateStr) {
   if (!dateStr) return "date not set";
   const d = new Date(`${dateStr}T00:00:00`);
@@ -174,10 +203,10 @@ export async function scheduleAppointmentReminder(booking) {
     const enabled = await isAppointmentReminderEnabled(booking.client_id);
     if (!enabled) return null;
 
-    const apptDateTime = new Date(`${booking.appointment_date}T${toHHMM(booking.appointment_time)}:00`);
-    if (Number.isNaN(apptDateTime.getTime())) return null;
+    const apptMs = await appointmentStartMs(booking);
+    if (!Number.isFinite(apptMs)) return null;
 
-    const reminderAt = apptDateTime.getTime() - REMINDER_LEAD_MINUTES * 60 * 1000;
+    const reminderAt = apptMs - REMINDER_LEAD_MINUTES * 60 * 1000;
     const delay = reminderAt - Date.now();
 
     // Too close (or already past) to meaningfully remind — e.g. the

@@ -3,7 +3,7 @@ import { hasOptedOut } from "../db.js";
 import {
   ACTIVE_STATUSES,
   isAppointmentReminderEnabled,
-  toHHMM,
+  appointmentStartMs,
   REMINDER_LEAD_MINUTES
 } from "../utils/bookings.js";
 import { getClient, deductCreditsAtomic, pauseClientIfLowCredits } from "./credit.js";
@@ -34,8 +34,9 @@ export async function processAppointmentReminder(bookingId) {
     return { skipped: "booking_not_active", status: booking.status };
   }
 
-  const apptDateTime = new Date(`${booking.appointment_date}T${toHHMM(booking.appointment_time)}:00`);
-  const minutesUntil = (apptDateTime.getTime() - Date.now()) / 60000;
+  // Read in the business's timezone — the server runs in UTC.
+  const apptMs = await appointmentStartMs(booking);
+  const minutesUntil = (apptMs - Date.now()) / 60000;
 
   // Tolerance window around the intended lead time, not an exact match —
   // guards against a job that's stale (survived a reschedule) firing at
