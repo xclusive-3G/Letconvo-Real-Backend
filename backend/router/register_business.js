@@ -2,6 +2,7 @@ import express from "express";
 import { supabase } from "../config/supabase.js";
 import { sendEmail } from "../utils/email.js";
 import { populateWebsiteInfo } from "../service/websiteInfo.js";
+import { buildClientKnowledgeBase } from "../service/retellKnowledgeBase.js";
 import { strictLimiter } from "../middleware/rateLimit.js";
 
 const router = express.Router();
@@ -59,10 +60,12 @@ router.post("/register-business", strictLimiter, async (req, res) => {
       return res.status(400).json({ error: "At least one working day is required" });
     }
 
-    // Loose "looks like a domain" check (e.g. "apexhealth.com",
+    // Required: the business's website is what its AI receptionist's
+    // Retell knowledge base is built from (service/retellKnowledgeBase.js),
+    // so the AI can answer questions about services, prices, location and
+    // policies. Loose "looks like a domain" check (e.g. "apexhealth.com",
     // "https://apexhealth.com") rather than a strict URL parse — signups
-    // paste this in all sorts of forms, and this is reference material for
-    // hand-building the client's prompt, not something the backend fetches.
+    // paste this in all sorts of forms.
     const trimmedWebsiteUrl = String(websiteUrl || "").trim();
     if (!/^(https?:\/\/)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/i.test(trimmedWebsiteUrl)) {
       return res.status(400).json({ error: "A valid website URL is required" });
@@ -233,6 +236,11 @@ router.post("/register-business", strictLimiter, async (req, res) => {
     // contained (populateWebsiteInfo never throws), fills in
     // client_settings.website_info once it's done.
     populateWebsiteInfo(supabase, client.id, normalizedWebsiteUrl);
+
+    // Same fire-and-forget pattern (never throws): discovers the site's key
+    // pages and has Retell scrape them into this business's knowledge base,
+    // which its calls then use once indexing finishes.
+    buildClientKnowledgeBase(supabase, client.id, normalizedWebsiteUrl, businessName);
 
     // // 5. Assign demo Telnyx number
     // const telnyxNumber = NULL;

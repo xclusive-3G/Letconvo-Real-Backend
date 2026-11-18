@@ -49,7 +49,7 @@ function isPrivateAddress(address, family) {
 // authenticated signup, not an anonymous public endpoint, but worth
 // hardening further (IP-pinned fetch with Host header) if this ever accepts
 // untrusted input.
-async function assertPublicHostname(hostname) {
+export async function assertPublicHostname(hostname) {
   const addresses = await dns.promises.lookup(hostname, { all: true, verbatim: true });
 
   if (!addresses.length) {

@@ -2,6 +2,7 @@ import express from "express";
 import { supabase } from "../config/supabase.js";
 import { findLatestBooking, formatDateHuman, formatTimeHuman, ACTIVE_STATUSES, formatWorkingDaysText, appointmentStartMs } from "../utils/bookings.js";
 import { isRetellRequestAuthorized } from "../middleware/retellAuth.js";
+import { getReadyKnowledgeBaseId } from "../service/retellKnowledgeBase.js";
 
 const router = express.Router();
 
@@ -64,7 +65,9 @@ router.post("/webhooks/retell/inbound-call", async (req, res) => {
             services_offered,
             booking_policies,
             website_info,
-            timezone
+            timezone,
+            retell_knowledge_base_id,
+            retell_knowledge_base_status
           )
         )
       `)
@@ -147,9 +150,22 @@ router.post("/webhooks/retell/inbound-call", async (req, res) => {
         ACTIVE_STATUSES.includes(existingBooking.status);
     }
 
+    // The business's own website knowledge base (built at signup by
+    // service/retellKnowledgeBase.js), attached for this call only. Only on
+    // the shared master agent — a Retell LLM agent, which is what
+    // agent_override.retell_llm applies to — and only once Retell reports
+    // the KB ready, since an invalid override can get the call rejected.
+    const knowledgeBaseId =
+      agentId === process.env.RETELL_LIVE_AGENT_ID
+        ? await getReadyKnowledgeBaseId(supabase, client.id, settings)
+        : null;
+
     return res.json({
       call_inbound: {
         override_agent_id: agentId,
+        ...(knowledgeBaseId
+          ? { agent_override: { retell_llm: { knowledge_base_ids: [knowledgeBaseId] } } }
+          : {}),
         dynamic_variables: {
           client_id: client.id,
           business_name: client.business_name || "the business",
