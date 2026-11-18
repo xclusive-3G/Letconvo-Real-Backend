@@ -359,6 +359,24 @@ router.post("/telnyx/voice", async (req, res) => {
   .toLowerCase();
 
 if (mode === "live") {
+  // Numbers on the FQDN/SIP-trunk connection are already delivered
+  // straight to Retell by Telnyx (Retell answers, and resolves agent +
+  // dynamic variables + the credit gate itself via
+  // router/retellInboundWebhook.js). Issuing a transfer on top of that
+  // starts a second, competing leg to sip:<agent>@sip.retellai.com that
+  // Retell rejects (486 "Unknown Number") — and the half-done transfer
+  // breaks the media path: observed 2026-11-18, the caller heard
+  // essentially nothing and Retell heard nothing from the caller until its
+  // silence timeout ended the call ~5 minutes later. So leave these calls
+  // alone and only transfer calls that aren't already headed to Retell.
+  if (payload?.flow_destination === "telnyx_number_ip_fqdn_connection") {
+    console.log("☎️ LIVE MODE → number routes to Retell over SIP already; no transfer", {
+      clientId: client.id,
+      to
+    });
+    return;
+  }
+
   console.log("☎️ LIVE MODE → transferring call to Retell SIP");
 
   // A per-client agent (hand-built by an admin) always wins if set — this
