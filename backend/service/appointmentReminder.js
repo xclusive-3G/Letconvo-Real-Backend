@@ -7,7 +7,7 @@ import {
   REMINDER_LEAD_MINUTES
 } from "../utils/bookings.js";
 import { getClient, deductCreditsAtomic, pauseClientIfLowCredits } from "./credit.js";
-import { createRetellReminderCall } from "./retell.js";
+import { createRetellReminderCall, REMINDER_AGENT_ID } from "./retell.js";
 
 // Small pre-authorization reservation before the call — mirrors the
 // intent of the missed-call-recovery reservation in service/recovery.js,
@@ -48,6 +48,13 @@ export async function processAppointmentReminder(bookingId) {
 
   const enabled = await isAppointmentReminderEnabled(booking.client_id);
   if (!enabled) return { skipped: "disabled_for_client" };
+
+  // Checked before reserving credits: never place a reminder without the
+  // dedicated reminder agent (see service/retell.js).
+  if (!REMINDER_AGENT_ID()) {
+    console.error("❌ RETELL_REMINDER_AGENT_ID is not set — skipping reminder call");
+    return { skipped: "no_reminder_agent" };
+  }
 
   const optedOut = await hasOptedOut(booking.customer_phone);
   if (optedOut) return { skipped: "opted_out" };

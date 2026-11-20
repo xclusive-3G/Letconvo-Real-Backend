@@ -7,7 +7,7 @@ import {
   findOrCreateRecovery
 } from "../db.js";
 import { callbackQueue } from "../queue/callBackQueue.js";
-import { createRetellCallback } from "./retell.js";
+import { createRetellCallback, CALLBACK_AGENT_ID } from "./retell.js";
 import { sendMissedCallSms } from "./telnyx.js";
 import { deductCreditsAtomic, hasEnoughCredits, pauseClientIfLowCredits, SMS_CREDIT_COST } from "./credit.js";
 import { isSmsNotifEnabled } from "../utils/createNotification.js";
@@ -140,6 +140,17 @@ export async function processCallbackJob(recoveryId) {
       callbackStatus: "skipped_opt_out"
     });
 
+    return null;
+  }
+
+  // Never place a callback without the dedicated callback agent (see
+  // service/retell.js) — the number's own bound agent may be anything.
+  if (!CALLBACK_AGENT_ID()) {
+    console.error("❌ RETELL_CALLBACK_AGENT_ID is not set — skipping callback");
+    await updateRecovery(recovery.id, {
+      status: "callback_agent_missing",
+      callbackStatus: "blocked_no_callback_agent"
+    });
     return null;
   }
 

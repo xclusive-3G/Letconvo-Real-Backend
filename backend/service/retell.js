@@ -1,6 +1,14 @@
 import axios from "axios";
 import { supabase } from "../config/supabase.js";
-import { getBusinessHours, formatDateHuman, formatTimeHuman } from "../utils/bookings.js";
+import { getBusinessHours, formatDateHuman, formatTimeHuman, formatWorkingDaysText } from "../utils/bookings.js";
+
+// Outbound calls name their agent explicitly. Without override_agent_id,
+// Retell uses whatever outbound agent is bound to RETELL_FROM_NUMBER in the
+// Retell dashboard — which is how reminders and missed-call callbacks ended
+// up playing an unrelated sales agent (observed 2026-11-19). If the agent
+// isn't configured, callers skip the call rather than fall back to that.
+export const REMINDER_AGENT_ID = () => process.env.RETELL_REMINDER_AGENT_ID?.trim() || null;
+export const CALLBACK_AGENT_ID = () => process.env.RETELL_CALLBACK_AGENT_ID?.trim() || null;
 
 const formatHour = (h) => {
   const period = h >= 12 ? "PM" : "AM";
@@ -65,20 +73,43 @@ export async function createRetellCallback({
   // agent's prompt can reference {{business_hours}} directly instead of
   // needing a tool call — /retell/get-business-hours (router/retellGetSlot.js)
   // still exists as the on-demand fallback for the live path.
-  const { openHour, closeHour } = await getBusinessHours(clientId);
+  const agentId = CALLBACK_AGENT_ID();
+  if (!agentId) throw new Error("RETELL_CALLBACK_AGENT_ID is not set");
+
+  const { openHour, closeHour, workingDays } = await getBusinessHours(clientId);
+
+  const { data: client } = await supabase
+    .from("clients")
+    .select("business_name")
+    .eq("id", clientId)
+    .maybeSingle();
+  const { data: settings } = await supabase
+    .from("client_settings")
+    .select("businessType, services_offered, booking_policies, booking_info_fields")
+    .eq("client_id", clientId)
+    .maybeSingle();
 
   const response = await axios.post(
     "https://api.retellai.com/v2/create-phone-call",
     {
       from_number: process.env.RETELL_FROM_NUMBER,
       to_number: toNumber,
+      override_agent_id: agentId,
       metadata: {
         clientId,
         recoveryId,
         source: "missed_call_recovery"
       },
       retell_llm_dynamic_variables: {
-        business_hours: `${formatHour(openHour)} to ${formatHour(closeHour)}, Monday through Saturday`
+        client_id: clientId,
+        business_name: client?.business_name || "the business",
+        business_type: settings?.businessType || "local business",
+        business_hours: `${formatHour(openHour)} to ${formatHour(closeHour)}, ${formatWorkingDaysText(workingDays)}`,
+        services_offered: settings?.services_offered || "not specified",
+        booking_policies: settings?.booking_policies || "none specified",
+        booking_fields: Array.isArray(settings?.booking_info_fields) && settings.booking_info_fields.length
+          ? settings.booking_info_fields.join(", ")
+          : "Full Name"
       }
     },
     {
@@ -95,16 +126,14 @@ export async function createRetellCallback({
 
 // Placed ~20 minutes before a booking's scheduled time (see
 // utils/bookings.js's scheduleAppointmentReminder / the "appointment-
-// reminders" queue processed in worker.js). Same no-explicit-agent_id
-// pattern as createRetellCallback — relies on RETELL_FROM_NUMBER's bound
-// agent, not a per-client one.
-//
-// For the agent to actually act on "customer says they're not coming",
-// its Retell dashboard prompt needs a tool call to POST
-// /retell/update-booking with { clientId, phone, status: "cancelled" }
-// (router/retellUpdateBooking.js) — that part is prompt configuration on
-// the business's Retell agent, not something this function can do itself.
+// reminders" queue processed in worker.js), on the dedicated "Letconvo
+// Appointment Reminder" agent (RETELL_REMINDER_AGENT_ID), whose tools
+// confirm/cancel/reschedule via /retell/update-booking and
+// /retell/get-slots using the client_id variable passed here.
 export async function createRetellReminderCall({ toNumber, clientId, booking }) {
+  const agentId = REMINDER_AGENT_ID();
+  if (!agentId) throw new Error("RETELL_REMINDER_AGENT_ID is not set");
+
   const { data: client } = await supabase
     .from("clients")
     .select("business_name")
@@ -116,12 +145,14 @@ export async function createRetellReminderCall({ toNumber, clientId, booking }) 
     {
       from_number: process.env.RETELL_FROM_NUMBER,
       to_number: toNumber,
+      override_agent_id: agentId,
       metadata: {
         clientId,
         bookingId: booking.id,
         source: "appointment_reminder"
       },
       retell_llm_dynamic_variables: {
+        client_id: clientId,
         business_name: client?.business_name || "the business",
         customer_name: booking.customer_name || "there",
         appointment_date: formatDateHuman(booking.appointment_date),
