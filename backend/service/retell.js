@@ -10,6 +10,29 @@ import { getBusinessHours, formatDateHuman, formatTimeHuman, formatWorkingDaysTe
 export const REMINDER_AGENT_ID = () => process.env.RETELL_REMINDER_AGENT_ID?.trim() || null;
 export const CALLBACK_AGENT_ID = () => process.env.RETELL_CALLBACK_AGENT_ID?.trim() || null;
 
+// Outbound calls (reminders, missed-call callbacks) ring out from the
+// business's own Letconvo number (client_numbers.telnyx_number — imported
+// into Retell with a Telnyx termination URI, so it can place calls), so
+// customers see the number they already know. RETELL_FROM_NUMBER is only a
+// fallback for a business that has no number assigned yet.
+export async function getOutboundFromNumber(clientId) {
+  const { data, error } = await supabase
+    .from("client_numbers")
+    .select("telnyx_number")
+    .eq("client_id", clientId)
+    .not("telnyx_number", "is", null)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("⚠️ Could not look up business number, using RETELL_FROM_NUMBER:", error.message);
+  }
+  if (data?.telnyx_number) return data.telnyx_number;
+
+  console.warn(`⚠️ Client ${clientId} has no assigned number — calling from RETELL_FROM_NUMBER`);
+  return process.env.RETELL_FROM_NUMBER;
+}
+
 const formatHour = (h) => {
   const period = h >= 12 ? "PM" : "AM";
   const hour12 = h % 12 === 0 ? 12 : h % 12;
@@ -92,7 +115,7 @@ export async function createRetellCallback({
   const response = await axios.post(
     "https://api.retellai.com/v2/create-phone-call",
     {
-      from_number: process.env.RETELL_FROM_NUMBER,
+      from_number: await getOutboundFromNumber(clientId),
       to_number: toNumber,
       override_agent_id: agentId,
       metadata: {
@@ -143,7 +166,7 @@ export async function createRetellReminderCall({ toNumber, clientId, booking }) 
   const response = await axios.post(
     "https://api.retellai.com/v2/create-phone-call",
     {
-      from_number: process.env.RETELL_FROM_NUMBER,
+      from_number: await getOutboundFromNumber(clientId),
       to_number: toNumber,
       override_agent_id: agentId,
       metadata: {
