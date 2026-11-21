@@ -138,7 +138,7 @@ export async function processPaystackTransaction(data) {
 
     const { data: clientRow, error: fetchError } = await supabase
       .from("clients")
-      .select("credits_remaining")
+      .select("credits_remaining, paused_by_owner")
       .eq("id", clientId)
       .single();
 
@@ -150,7 +150,8 @@ export async function processPaystackTransaction(data) {
       .from("clients")
       .update({
         credits_remaining: newBalance,
-        status: "active",
+        // A top-up must not switch back on an AI the owner paused.
+        status: clientRow.paused_by_owner ? "paused" : "active",
         ...(customerCode ? { paystack_customer_code: customerCode } : {}),
         ...(authorizationCode ? { paystack_authorization_code: authorizationCode } : {})
       })
@@ -194,11 +195,18 @@ export async function processPaystackTransaction(data) {
 
   const newBalance = Number(plan?.monthly_credits || 0);
 
+  const { data: pauseRow } = await supabase
+    .from("clients")
+    .select("paused_by_owner")
+    .eq("id", clientId)
+    .maybeSingle();
+
   const { error } = await supabase
     .from("clients")
     .update({
       subscription_status: "active",
-      status: "active",
+      // A subscription payment must not switch back on an AI the owner paused.
+      status: pauseRow?.paused_by_owner ? "paused" : "active",
       paystack_customer_code: customerCode || null,
       ...(authorizationCode ? { paystack_authorization_code: authorizationCode } : {}),
       plan_id: plan?.id,

@@ -348,6 +348,7 @@ router.get("/me/dashboard-stats", requireAuth, async (req, res) => {
         creditsUsed: totalCreditsUsed,
         totalCost: Number(totalCost.toFixed(2)),
         status: client.status,
+        pausedByOwner: Boolean(client.paused_by_owner),
         receptionistMode: client.receptionist_mode
       },
       weeklyData,
@@ -1092,6 +1093,7 @@ router.get("/me/settings", requireAuth, async (req, res) => {
         calendarSync: settings?.calendar_sync ?? false,
         calendarConnected: Boolean(calendarIntegration?.connected),
         calendarEmail: calendarIntegration?.email || null,
+        receptionistPaused: Boolean(client.paused_by_owner),
         crmSync: settings?.crm_sync ?? false,
         webhookUrl: settings?.webhook_url || "",
         zapierKey: settings?.zapier_key || "",
@@ -1827,5 +1829,131 @@ router.get(
     }
   }
 );
+
+// ── Danger zone ─────────────────────────────────────────────────────────
+
+// Same floor the inbound-call gates use (telnyxVoiceWebhook2 /
+// retellInboundWebhook / credit.js): at or below this the AI can't take calls.
+const RESUME_MIN_CREDITS = 30;
+
+// Owner pauses / resumes their AI receptionist. While paused_by_owner is
+// set, status stays "paused", so every call path (inbound answering,
+// missed-call callbacks, reminder calls) stops, and automatic resumes on a
+// credit top-up or subscription payment are skipped (credit.js/billing.js).
+router.post("/me/receptionist/pause", requireAuth, async (req, res) => {
+  try {
+    const paused = req.body?.paused === true;
+    const client = await getClientByUserId(req.user.id, "id, credits_remaining");
+    const hasCredits = Number(client.credits_remaining || 0) > RESUME_MIN_CREDITS;
+
+    const status = paused ? "paused" : hasCredits ? "active" : "paused";
+
+    const { error } = await supabase
+      .from("clients")
+      .update({ paused_by_owner: paused, status })
+      .eq("id", client.id);
+    if (error) throw error;
+
+    return res.json({
+      success: true,
+      paused,
+      status,
+      // Resumed, but still blocked by low credits until a top-up.
+      lowCredits: !paused && !hasCredits
+    });
+  } catch (err) {
+    console.error("❌ Pause receptionist error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Permanently deletes the signed-in owner's business: all of its data in
+// every table keyed by client_id / user_id, its Retell knowledge base,
+// pending reminder calls, and finally the Supabase auth user. Requires the
+// body { confirm: "DELETE" } so it can't be triggered by an accidental call.
+// The business's phone numbers are only unassigned (client_numbers rows),
+// not released from Telnyx/Retell — that stays an admin decision.
+const CLIENT_TABLES = [
+  "bookings",
+  "retell_call_logs",
+  "credit_transactions",
+  "billing_transactions",
+  "notifications",
+  "missed_call_recoveries",
+  "active_calls",
+  "client_phone_setup",
+  "payment_methods",
+  "client_numbers",
+  "client_settings"
+];
+const USER_TABLES = ["calendar_integrations", "oauth_states"];
+
+router.delete("/me/account", requireAuth, async (req, res) => {
+  if (req.body?.confirm !== "DELETE") {
+    return res.status(400).json({ error: 'Type DELETE to confirm account deletion.' });
+  }
+
+  const userId = req.user.id;
+
+  try {
+    // Every client row for this login (a double-submitted signup can leave
+    // more than one — see register_business.js).
+    const { data: clients, error: clientsError } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("user_id", userId);
+    if (clientsError) throw clientsError;
+
+    const clientIds = (clients || []).map((c) => c.id);
+
+    if (clientIds.length) {
+      // Stop reminder calls that are already queued.
+      const { data: bookings } = await supabase
+        .from("bookings")
+        .select("id")
+        .in("client_id", clientIds);
+      for (const b of bookings || []) {
+        await cancelAppointmentReminder(b.id);
+      }
+
+      // Remove the business's website knowledge base from Retell.
+      const { data: settingsRows } = await supabase
+        .from("client_settings")
+        .select("retell_knowledge_base_id")
+        .in("client_id", clientIds);
+      for (const s of settingsRows || []) {
+        if (!s.retell_knowledge_base_id) continue;
+        await fetch(`https://api.retellai.com/delete-knowledge-base/${s.retell_knowledge_base_id}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${process.env.RETELL_API_KEY}` }
+        }).catch(() => {});
+      }
+
+      for (const table of CLIENT_TABLES) {
+        const { error } = await supabase.from(table).delete().in("client_id", clientIds);
+        if (error) console.error(`⚠️ Account delete: could not clear ${table}:`, error.message);
+      }
+    }
+
+    for (const table of USER_TABLES) {
+      const { error } = await supabase.from(table).delete().eq("user_id", userId);
+      if (error) console.error(`⚠️ Account delete: could not clear ${table}:`, error.message);
+    }
+
+    if (clientIds.length) {
+      const { error } = await supabase.from("clients").delete().in("id", clientIds);
+      if (error) throw error;
+    }
+
+    const { error: authError } = await supabase.auth.admin.deleteUser(userId);
+    if (authError) throw authError;
+
+    console.log(`🗑️ Account deleted by owner: user ${userId}, clients ${clientIds.join(", ") || "(none)"}`);
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("❌ Delete account error:", err);
+    return res.status(500).json({ error: "Could not delete your account. Please contact support." });
+  }
+});
 
 export default router;

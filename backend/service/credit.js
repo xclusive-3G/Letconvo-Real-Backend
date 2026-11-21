@@ -297,7 +297,7 @@ export const pauseClientIfNoCredits = pauseClientIfLowCredits;
 export async function activateClientIfEnoughCredits(clientId, minimumCredits = 0) {
   const { data: client, error } = await supabase
     .from("clients")
-    .select("id, credits_remaining, status")
+    .select("id, credits_remaining, status, paused_by_owner")
     .eq("id", clientId)
     .single();
 
@@ -305,7 +305,8 @@ export async function activateClientIfEnoughCredits(clientId, minimumCredits = 0
 
   const credits = Number(client.credits_remaining || 0);
 
-  if (credits > minimumCredits && client.status !== "active") {
+  // Never auto-resume a business whose owner paused it from the dashboard.
+  if (credits > minimumCredits && client.status !== "active" && !client.paused_by_owner) {
     const { error: updateError } = await supabase
       .from("clients")
       .update({ status: "active" })
