@@ -4,6 +4,7 @@ import { normalizePhone, ACTIVE_STATUSES, scheduleAppointmentReminder, resolveRe
 import { createNotification } from "../utils/createNotification.js";
 import { requireRetellSecret } from "../middleware/retellAuth.js";
 import { isSlotBusy, syncBookingToCalendar } from "../service/googleCalendar.js";
+import { queueBookingWebhook } from "../service/clientWebhook.js";
 
 const router = express.Router();
 
@@ -92,6 +93,7 @@ router.post("/book-appointment", requireRetellSecret, async (req, res) => {
     });
 
     await scheduleAppointmentReminder(data);
+    queueBookingWebhook("booking.created", data);
     await syncBookingToCalendar(data);
 
     return res.status(201).json({ success: true, booking: data });

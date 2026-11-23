@@ -20,3 +20,12 @@ export const strictLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// Each test makes the server call a customer-supplied URL, so keep it modest.
+export const webhookTestLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many test events. Please wait a few minutes." },
+});

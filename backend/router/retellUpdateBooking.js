@@ -10,6 +10,7 @@ import {
 } from "../utils/bookings.js";
 import { requireRetellSecret } from "../middleware/retellAuth.js";
 import { isSlotBusy, syncBookingToCalendar } from "../service/googleCalendar.js";
+import { queueBookingWebhook } from "../service/clientWebhook.js";
 
 const router = express.Router();
 
@@ -95,6 +96,7 @@ router.post("/retell/update-booking", requireRetellSecret, async (req, res) => {
       await cancelAppointmentReminder(data.id);
     }
 
+    queueBookingWebhook("booking.updated", data);
     await syncBookingToCalendar(data);
 
     return res.json({ success: true, booking: data });

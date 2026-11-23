@@ -3,6 +3,7 @@ import { supabase } from "../config/supabase.js";
 import { findLatestBooking } from "../utils/bookings.js";
 import { requireRetellSecret } from "../middleware/retellAuth.js";
 import { syncBookingToCalendar } from "../service/googleCalendar.js";
+import { queueBookingWebhook } from "../service/clientWebhook.js";
 
 const router = express.Router();
 
@@ -48,6 +49,7 @@ router.post("/webhooks/retell", requireRetellSecret, async (req, res) => {
 
     if (error) throw error;
 
+    queueBookingWebhook("booking.updated", updated);
     await syncBookingToCalendar(updated);
 
     console.log(`✅ Booking ${existing.id} updated via intent "${intent}" for ${phone}`);

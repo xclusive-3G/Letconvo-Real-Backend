@@ -3,6 +3,7 @@ import { supabase } from "../config/supabase.js";
 import { normalizePhone, ACTIVE_STATUSES, scheduleAppointmentReminder } from "../utils/bookings.js";
 import { createNotification } from "../utils/createNotification.js";
 import { isSlotBusy, syncBookingToCalendar } from "../service/googleCalendar.js";
+import { queueBookingWebhook } from "../service/clientWebhook.js";
 
 const router = express.Router();
 
@@ -81,6 +82,7 @@ router.post("/api/bookings", async (req, res) => {
     });
 
     await scheduleAppointmentReminder(data);
+    queueBookingWebhook("booking.created", data);
     await syncBookingToCalendar(data);
 
     return res.status(201).json(data);

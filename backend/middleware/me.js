@@ -11,6 +11,8 @@ import {
 } from "../utils/bookings.js";
 import { sendSms } from "../service/telnyx.js";
 import { syncBookingToCalendar, backfillUpcomingBookings } from "../service/googleCalendar.js";
+import { queueBookingWebhook, sendTestWebhook, validateWebhookUrl } from "../service/clientWebhook.js";
+import { webhookTestLimiter } from "./rateLimit.js";
 import { hasEnoughCredits, deductCreditsAtomic, SMS_CREDIT_COST } from "../service/credit.js";
 // import {
 //   getLiveCalls
@@ -436,6 +438,7 @@ router.patch("/me/appointments/:id", requireAuth, async (req, res) => {
 
     // Staff edits are a deliberate choice, so no busy-check here — just
     // move/remove the matching Google Calendar event to match.
+    queueBookingWebhook("booking.updated", data);
     await syncBookingToCalendar(data);
 
     return res.json({ success: true, appointment: data });
@@ -1142,6 +1145,16 @@ router.put("/me/settings", requireAuth, async (req, res) => {
       reportEmail
     } = req.body;
 
+    // Checked before anything is saved. Left out of the request = unchanged.
+    let cleanWebhookUrl;
+    if (webhookUrl !== undefined) {
+      try {
+        cleanWebhookUrl = validateWebhookUrl(webhookUrl);
+      } catch (err) {
+        return res.status(400).json({ error: err.message });
+      }
+    }
+
     const { error: clientUpdateError } = await supabase
       .from("clients")
       .update({
@@ -1171,7 +1184,7 @@ router.put("/me/settings", requireAuth, async (req, res) => {
       timezone,
       calendar_sync: calendarSync,
       crm_sync: crmSync,
-      webhook_url: webhookUrl,
+      webhook_url: cleanWebhookUrl,
       zapier_key: zapierKey,
       email_notif: emailNotif,
       sms_notif: smsNotif,
@@ -1213,6 +1226,26 @@ router.put("/me/settings", requireAuth, async (req, res) => {
   } catch (err) {
     console.error("❌ Update settings error:", err);
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// Sends a sample event to the URL currently in the form (saved or not).
+router.post("/me/webhook/test", webhookTestLimiter, requireAuth, async (req, res) => {
+  let url;
+  try {
+    url = validateWebhookUrl(req.body?.webhookUrl);
+    if (!url) throw new Error("Enter a webhook URL first.");
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  try {
+    const status = await sendTestWebhook(url);
+    if (status >= 200 && status < 300) return res.json({ success: true });
+    return res.status(422).json({ error: `Your webhook replied with status ${status} instead of 2xx.` });
+  } catch (err) {
+    console.error("⚠️ Test webhook failed:", err.code || err.message);
+    return res.status(422).json({ error: "Couldn't reach that webhook URL. Check it and try again." });
   }
 });
 

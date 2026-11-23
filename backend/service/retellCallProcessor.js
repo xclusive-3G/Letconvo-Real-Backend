@@ -3,6 +3,7 @@ import { createBillingTransaction } from "./billingTransaction.js";
 import { deductCreditsAtomic, pauseClientIfLowCredits } from "./credit.js";
 import { createNotification } from "../utils/createNotification.js";
 import { extractCallerName } from "../utils/callerName.js";
+import { queueCallWebhook } from "./clientWebhook.js";
 
 const MIN_CALL_CREDITS = 1;
 const MIN_START_CREDITS = 30; // 1 minute of call time at CREDITS_PER_SECOND below
@@ -84,6 +85,8 @@ export async function processCompletedCall({ call, clientId, rawEvent }) {
       ? new Date(call.startTimestamp).toISOString()
       : undefined;
 
+  const endedAt = call?.end_timestamp || call?.start_timestamp || call?.startTimestamp;
+
   const failedReasons = ["dial_busy", "dial_no_answer", "dial_failed"];
 
   if (durationSeconds === 0 || callCost === 0 || failedReasons.includes(call?.disconnection_reason)) {
@@ -109,6 +112,8 @@ export async function processCompletedCall({ call, clientId, rawEvent }) {
       raw_payload: rawEvent || { call },
       ...(occurredAt ? { created_at: occurredAt } : {})
     });
+
+    queueCallWebhook({ clientId, retellCallId, endedAt });
 
     if (failedReasons.includes(call?.disconnection_reason)) {
       await createNotification({
@@ -176,6 +181,8 @@ export async function processCompletedCall({ call, clientId, rawEvent }) {
   });
 
   if (logError) throw logError;
+
+  queueCallWebhook({ clientId, retellCallId, endedAt });
 
   await createNotification({
     clientId,

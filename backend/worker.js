@@ -5,6 +5,7 @@ import { Worker } from "bullmq";
 import { connection } from "./queue/connection.js";
 import { processCallbackJob } from "./service/recovery.js";
 import { processAppointmentReminder } from "./service/appointmentReminder.js";
+import { processWebhookJob } from "./service/clientWebhook.js";
 
 console.log("✅ Worker running on missed-call-callbacks");
 
@@ -66,4 +67,23 @@ reminderWorker.on("failed", (job, err) => {
 
 reminderWorker.on("error", (err) => {
   console.error("❌ Reminder worker error:", err.message);
+});
+
+console.log("✅ Worker running on client-webhooks");
+
+const webhookWorker = new Worker("client-webhooks", processWebhookJob, {
+  connection,
+  concurrency: 5
+});
+
+webhookWorker.on("completed", (job, result) => {
+  console.log("✅ Webhook job completed:", job.id, result);
+});
+
+webhookWorker.on("failed", (job, err) => {
+  console.error("❌ Webhook job failed:", job?.id, err.message);
+});
+
+webhookWorker.on("error", (err) => {
+  console.error("❌ Webhook worker error:", err.message);
 });
