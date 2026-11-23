@@ -1412,7 +1412,7 @@ router.get("/plans", async (req, res) => {
         slug: p.slug,
         price: Number(p.price_usd || 0),
         minutes: Number(p.monthly_minutes ?? p.monthly_credits ?? 0),
-        perMin: Number(p.extra_minute_price || 0.22),
+        perMin: Number(p.extra_minute_price || 0.3),
         features: p.features || []
       }))
     });
