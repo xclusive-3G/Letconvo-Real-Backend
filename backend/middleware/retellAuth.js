@@ -45,7 +45,7 @@ export function isRetellRequestAuthorized(req) {
 
 export function requireRetellSecret(req, res, next) {
   if (!isRetellRequestAuthorized(req)) {
-    console.warn("❌ Rejected request with missing/invalid Retell shared secret:", req.originalUrl);
+    console.warn("❌ Rejected request with missing/invalid Retell shared secret:", req.originalUrl.split("?")[0]);
     return res.status(401).json({ error: "Unauthorized" });
   }
 

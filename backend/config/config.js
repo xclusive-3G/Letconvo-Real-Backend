@@ -10,7 +10,6 @@ dotenv.config({
   path: path.resolve(__dirname, "../../.env"),
 });
 
-console.log("ENV CHECK:", process.env.TELNYX_API_KEY);
 
 const envSchema = z.object({
   PORT: z.string().default("5000"),
