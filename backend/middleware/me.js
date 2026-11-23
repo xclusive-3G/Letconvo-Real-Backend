@@ -25,7 +25,7 @@ const CREDITS_PER_MINUTE = 30;
 const TRIAL_MINUTES = TRIAL_CREDITS / CREDITS_PER_MINUTE;
 
 // 1 credit = $0.01 (100 credits per dollar) — anchored to the plans table
-// (e.g. Starter: $120 = 12,000 monthly_credits = 400 monthly_minutes).
+// (e.g. Starter: $60 = 4,500 monthly_credits = 150 monthly_minutes; 30 credits/min).
 // Must match CREDITS_PER_DOLLAR in service/billing.js.
 const CREDITS_PER_DOLLAR = 100;
 

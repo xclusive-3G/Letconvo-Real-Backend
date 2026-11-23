@@ -6,7 +6,7 @@ import { createNotification } from "../utils/createNotification.js";
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://letconvo.live";
 
 // 1 credit = $0.01 (100 credits per dollar) — anchored to the plans table
-// (e.g. Starter: $120 = 12,000 monthly_credits = 400 monthly_minutes).
+// (e.g. Starter: $60 = 4,500 monthly_credits = 150 monthly_minutes; 30 credits/min).
 // Must match CREDITS_PER_DOLLAR in middleware/me.js.
 const CREDITS_PER_DOLLAR = 100;
 

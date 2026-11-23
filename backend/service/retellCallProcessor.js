@@ -9,7 +9,7 @@ const MIN_START_CREDITS = 30; // 1 minute of call time at CREDITS_PER_SECOND bel
 const CREDITS_PER_SECOND = 0.5;
 
 // 1 credit = $0.01 (100 credits per dollar) — anchored to the plans table
-// (e.g. Starter: $120 = 12,000 monthly_credits = 400 monthly_minutes).
+// (e.g. Starter: $60 = 4,500 monthly_credits = 150 monthly_minutes; 30 credits/min).
 // Must match CREDITS_PER_DOLLAR in middleware/me.js and service/billing.js.
 const CREDITS_PER_DOLLAR = 100;
 
